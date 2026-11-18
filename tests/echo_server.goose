@@ -13,7 +13,7 @@ import std;
 import os;
 import goose_io from "github.com/BHare1985/goose-io@v0.2";
 import goose_io.examples.echo.echo;
-import epoll from "..";
+import epoll_ext from "..";
 
 var address: u8[>..] = [];
 var workers: i64     = 1;

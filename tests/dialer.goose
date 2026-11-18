@@ -13,7 +13,7 @@
 import std;
 import os;
 import goose_io from "github.com/BHare1985/goose-io@v0.2";
-import epoll from "..";
+import epoll_ext from "..";
 
 struct Tag { n: i64 = 0 }
 

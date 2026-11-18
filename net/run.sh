@@ -9,7 +9,7 @@ filter="${1:-}"; repeat="${REPEAT:-1}"
 bin="$(mktemp -d "${TMPDIR:-/tmp}/epoll-net.XXXXXX")"; trap 'rm -rf "$bin"' EXIT
 export NET_BIN="$bin"
 failed=0; ran=0
-for src in tests/*.goose http_hello.goose; do
+for src in tests/*.goose http_hello.goose forward_server.goose; do
     [ -e "$src" ] || continue
     name="$(basename "$src" .goose)"
     # a program is built only when some selected driver needs it (its name appears in the driver)
