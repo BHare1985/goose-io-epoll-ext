@@ -9,7 +9,6 @@ on top of goose-io-epoll's; `git diff <first commit> HEAD` is the extension (nam
 ```bash
 ./build.sh forward_server.goose forward_server
 ./conformance.sh --repeat 3     # the goose-io conformance suite, which the extension must still pass
-net/run.sh                      # network tests on real peers: all of goose-io-epoll's plus net/forward_test.py (forwarding)
 net/run.sh                      # network tests on real peers: all of goose-io-epoll's, plus net/forward_test.py for the forwarding
 ```
 
