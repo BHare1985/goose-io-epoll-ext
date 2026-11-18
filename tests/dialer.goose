@@ -56,7 +56,7 @@ fn main() {
     var t: u8[>..] = [];
     arg(2, t);
     let count = number(t[..]);
-    var io = epoll::Loop { .. };
+    var io = epoll_ext::Loop { .. };
     for k in 3..arg_count() {
         var s: u8[>..] = [];
         arg(k, s);

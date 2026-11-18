@@ -17,7 +17,7 @@ import epoll from "..";
 
 var address: u8[>..] = [];
 var workers: i64     = 1;
-var limits = epoll::Limits { .. };
+var limits = epoll_ext::Limits { .. };
 var keep: bool = false;
 
 fn number(text: const u8[:]) -> i64 {
@@ -40,7 +40,7 @@ fn setting(text: const u8[:]) {
     else if name == "keep" { keep = v != 0; }
 }
 
-fn on_event(e: echo::Echo&, io: epoll::Loop&, ev: goose_io::Event) {
+fn on_event(e: echo::Echo&, io: epoll_ext::Loop&, ev: goose_io::Event) {
     if keep {
         match ev {
             Opened o => { io.set_keep_open_on_eof(o.link, true); },
@@ -51,12 +51,12 @@ fn on_event(e: echo::Echo&, io: epoll::Loop&, ev: goose_io::Event) {
 }
 
 thread_fn worker(index: i64) {
-    var io = epoll::Loop { .. };
+    var io = epoll_ext::Loop { .. };
     io.limits = limits;
     var e = echo::Echo { .. };
     if !e.start(io, address[..]) {
         print("cannot listen on ", address);
-        epoll::report_failed_start();
+        epoll_ext::report_failed_start();
         return;
     }
     io.attach(index);
@@ -67,21 +67,21 @@ fn main() {
     if arg_count() > 1 { arg(1, address); } else { address.append("127.0.0.1:7000"); }
     if arg_count() > 2 { var t: u8[>..] = []; arg(2, t); workers = number(t[..]); }
     for k in 3..arg_count() { var t: u8[>..] = []; arg(k, t); setting(t[..]); }
-    let probed = epoll::probe(address[..]);
+    let probed = epoll_ext::probe(address[..]);
     if goose_io::failed(probed) {
         var msg: u8[>..] = [];
-        epoll::describe_listen_failure(address[..], probed, msg);
+        epoll_ext::describe_listen_failure(address[..], probed, msg);
         print(msg);
         exit(2);
     }
-    epoll::spawn(workers, worker);
+    epoll_ext::spawn(workers, worker);
     loop {
-        let sig = epoll::wait_for_signal();
+        let sig = epoll_ext::wait_for_signal();
         if sig != 10 { break; }
-        let s = epoll::gather_stats(workers);
+        let s = epoll_ext::gather_stats(workers);
         print("STATS accepted=", s.accepted, " open=", s.open, " buffers_total=", s.buffers_total, " buffer_waits=", s.buffer_waits,
               " closed_peer=", s.closed[0], " closed_reset=", s.closed[1], " closed_idle=", s.closed[3], " closed_half=", s.closed[4],
               " closed_local=", s.closed[5], " accept_failures=", s.accept_failures);
     }
-    epoll::drain(10000);
+    epoll_ext::drain(10000);
 }

@@ -1,7 +1,7 @@
 // Socket addresses as the contract writes them: "10.0.0.5:5432", "[::1]:443". No host names, no zone identifier, no
 // `unix:` form (this loop does not supply the unix group, so those are BadAddress). From tcprouter's address.goose;
 // the differences are the port 0 that `listen` takes and the formatter of `peer_address`.
-namespace epoll;
+namespace epoll_ext;
 
 import std;
 import goose_io;

@@ -9,9 +9,9 @@ var address:  u8[>..] = [];
 var grace_ms: i64     = 30000;
 
 thread_fn worker(index: i64) {
-    var io = epoll::Loop { .. };
+    var io = epoll_ext::Loop { .. };
     let listener, err = io.listen(address[..]);
-    if goose_io::failed(err) { print("cannot listen"); epoll::report_failed_start(); return; }
+    if goose_io::failed(err) { print("cannot listen"); epoll_ext::report_failed_start(); return; }
     io.attach(index);
     io.serve() { io, ev => };
 }
@@ -25,6 +25,6 @@ fn main() {
         grace_ms = 0;
         for ch in t { if ch >= '0' && ch <= '9' { grace_ms = grace_ms * 10 + (ch - '0'); } }
     }
-    epoll::spawn(1, worker);
-    epoll::wait_for_signal_then_drain(grace_ms);
+    epoll_ext::spawn(1, worker);
+    epoll_ext::wait_for_signal_then_drain(grace_ms);
 }

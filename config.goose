@@ -1,6 +1,6 @@
 // What a loop is configured with: plain data, set on the loop before it listens, dials or serves. The names and the
 // defaults are tcprouter's `Limits`, less the limits of the proxy (the time allowed for a ClientHello).
-namespace epoll;
+namespace epoll_ext;
 
 struct Limits {
     connect_timeout_ms:    i64 = 2000,   // a dial's own limit when it is given connect_ms 0

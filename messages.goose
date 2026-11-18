@@ -6,7 +6,7 @@
 // Goose's typed queues deliver a value to ONE receiver, so a broadcast needs an address per loop: each loop owns a pipe.
 // spawn() makes all of them before it starts any loop (globals set in main are copied into each thread at spawn), post()
 // writes one small flat record to every pipe, and a loop reads its own from epoll, before it handles the events of the same pass.
-namespace epoll;
+namespace epoll_ext;
 
 import std;
 import binary;

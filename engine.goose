@@ -19,7 +19,7 @@
 //     var io = epoll::Loop { .. };
 //     let l, err = io.listen("0.0.0.0:8080");
 //     io.serve() { io, ev => handle(io, ev); };
-namespace epoll;
+namespace epoll_ext;
 
 import std;
 import os;
@@ -121,6 +121,12 @@ struct _Link {
     local_closed:      bool,     // the application called close or reset
     peer:              u8[18],   // the peer's address, kept when a reset has made the socket forget it (_end)
     peer_family:       i32,      // 4 or 6 when `peer` holds one, else 0
+    server_fd:         i32,      // forwarding (forward.goose): the socket to the target
+    server_mask:       u32,
+    ready:             u8,         // edge-triggered readiness flags of a forwarded link
+    queued:            bool,       // on the ready list
+    up:                _Direction, // client to server
+    down:              _Direction, // server to client
 }
 
 struct _Pending {
@@ -174,6 +180,10 @@ root struct Loop {
     _dial_due:           i64             = 0,     // the earliest connect deadline among them (0 = none known)
     _wake_at:            i64             = 0,     // the earliest time asked for with tick_by, or 0
     _now_ms:             i64             = 0,     // CLOCK_BOOTTIME at the start of the current pass of the loop
+    _fwd_listener:       u32             = 0, // the listener whose connections are forwarded (forward.goose), 0 = none
+    _fwd_target:         _ParsedAddress  = _ParsedAddress { false, [0; 16], 0 },
+    _ready:              u64[>..<]       = [], // forwarded links with work left after a pass
+    _ready_head:         i64             = 0,
 }
 
 // --- small helpers -------------------------------------------------------------------------------
@@ -261,7 +271,7 @@ fn _wake_waiting(io: Loop&) {
         let gen = ((e >> 8) & 0xffffff) as u32;
         if slot < io._links.len {
             let s .= io._links[slot];
-            if s.state == _OPEN && s.gen == gen {
+            if (s.state == _OPEN || s._is_forwarded()) && s.gen == gen {
                 if (e & 0xff) == _WAITER_WRITER {
                     // A send refused for lack of pool buffers while its queue was empty (nothing else would ever wake it).
                     if s.want_writable && s.out_count == 0 && !s.closing {
@@ -273,6 +283,9 @@ fn _wake_waiting(io: Loop&) {
                         }
                         io._waiting_reads.push(_pack_event_data(_WAITER_WRITER, slot, gen));     // not enough room yet: wait again
                     }
+                } else if (e & 0xff) == _WAITER_FWD_UP || (e & 0xff) == _WAITER_FWD_DOWN {
+                    let dir .= s._direction_of((e & 0xff) == _WAITER_FWD_UP);
+                    if dir.waiting { dir.waiting = false; io._queue_ready(slot); break; }
                 } else if s.waiting {
                     s.waiting = false;
                     io._update_interest(slot);
@@ -322,7 +335,7 @@ fn _fresh_link(io: Loop&, fd: i32, listener: u32, state: u8) -> i64 {
         out_pos:           0, rbuf: -1, rlen: 0, refused: 0, paused: false, data_pending: false, data_queued: false, waiting: false,
         want_writable:     false, closing: false, closing_reason: goose_io::CloseReason.Local, orphan: false, eof_seen: false,
         eof_handled:       false, keep_open: false, window: false, shut_wr_pending: false, wr_shut: false, local_closed: false,
-        peer:              [0; 18], peer_family: 0,
+        peer:              [0; 18], peer_family: 0, server_fd: -1, server_mask: 0, ready: 0, queued: false, up: _Direction { .. }, down: _Direction { .. },
     };
     var i: i64 = 0;
     if io._free_links.len > 0 {
@@ -511,6 +524,7 @@ fn _new_link(io: Loop&, k: i64, fd: i32) {
         return;
     }
     let i = io._fresh_link(fd, (k + 1) as u32, _OPEN);
+    if io._fwd_listener == (k + 1) as u32 { io._start_forward(i); return; }
     io._queue(_PENDING_OPENED, i);
     io._update_interest(i);
 }
@@ -916,6 +930,7 @@ fn _enforce_stop(io: Loop&) {
     if !io._draining || io._live == 0 || io._now_ms < io._drain_deadline_ms { return; }
     for i in io._links.len {
         let s .= io._links[i];
+        if s._is_forwarded() { io._end_forward(i, goose_io::CloseReason.Shutdown); continue; }
         if s.state == _OPEN || s.state == _DIALING {
             if s.closing && _is_local(s.closing_reason) { io._end(i, goose_io::CloseReason.Local); }
             else { io._end(i, goose_io::CloseReason.Shutdown); }
@@ -1058,6 +1073,7 @@ fn _sweep_timeouts(io: Loop&, now: i64) {
     let limits = io.limits;
     for i in io._links.len {
         let s .= io._links[i];
+        if s._is_forwarded() { io._sweep_forward(i, now); continue; }
         if s.state != _OPEN { continue; }
         if s.closing_at_ms != 0 && _is_local(s.closing_reason) {
             if now - s.closing_at_ms >= limits.half_close_timeout_ms { io._end(i, goose_io::CloseReason.Local); }
@@ -1083,10 +1099,12 @@ fn _dispatch_event(io: Loop&, data: u64, events: u32) {
         return;
     }
     if kind == _EVENT_KIND_ORPHAN { io._drain_orphan(slot); return; }
-    if kind != _EVENT_KIND_LINK { io._stats.bad_events++; return; }
+    if kind != _EVENT_KIND_LINK && kind != _EVENT_KIND_SERVER { io._stats.bad_events++; return; }
     if slot >= io._links.len { io._stats.bad_events++; return; }
     let s .= io._links[slot];
     if s.state == _FREE || s.gen != gen { io._stats.stale_events++; return; }     // an event for a link that has ended (and maybe whose slot is reused)
+    if s._is_forwarded() { io._dispatch_forward(slot, kind, events); return; }
+    if kind != _EVENT_KIND_LINK { return; }
     if s.state == _ENDED { return; }                                 // Closed is queued: the descriptor is closed when it has been handled
     if s.state == _DIALING { io._dial_finished(slot); return; }      // success, refusal or error: the socket says which
     if (events & c_EPOLLERR) != 0 { io._end(slot, goose_io::CloseReason.PeerReset); return; }
@@ -1152,6 +1170,7 @@ fn serve<F>(io: Loop&) {
         } else {
             for k in n { if (events[k].data & 0xff) != _EVENT_KIND_MESSAGE { io._dispatch_event(events[k].data, events[k].events); } }
         }
+        io._run_ready();
         io._deliver(F);
         io._enforce_stop();
         io._deliver(F);

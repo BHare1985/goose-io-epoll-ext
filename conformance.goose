@@ -15,7 +15,7 @@ import std;
 import os;
 import goose_io from "github.com/BHare1985/goose-io@v0.2";
 import goose_io.conformance.suite;
-import epoll from ".";
+import epoll_ext from ".";
 
 // The runner's own use of the loop's C layer: declared again here, because a program may name the symbols it links.
 extern fn c_listen(v6: bool, ip: const u8[16]&, port: u16, reuseport: bool, backlog: i32) -> i32;
@@ -74,7 +74,7 @@ fn main() {
     let rfd = make_listener(1, texts);
     c_close(rfd);
 
-    var io = epoll::Loop { .. };
+    var io = epoll_ext::Loop { .. };
     io.limits.half_close_timeout_ms = 3000;
     goose_io::require_core(io);
     goose_io::require_half_close(io);

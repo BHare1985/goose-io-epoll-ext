@@ -2,7 +2,7 @@
 // struct layouts and constants they share with C. Everything here comes from C, so everything here is named c_...,
 // exactly as in src/sys.c. Every function returns a negative errno on failure (-11, EAGAIN, means "not now"), which
 // src/sys.c arranges because errno is thread-local. (This is tcprouter's sys.goose, less what the proxy used.)
-namespace epoll;
+namespace epoll_ext;
 
 // struct epoll_event as the C layer fills it: packed, 12 bytes (checked there by _Static_assert).
 struct c_EpollEvent { events: u32, data: u64 }
@@ -12,6 +12,7 @@ let c_EPOLLOUT:      u32 = 0x004;
 let c_EPOLLERR:      u32 = 0x008;
 let c_EPOLLHUP:      u32 = 0x010;
 let c_EPOLLRDHUP:    u32 = 0x2000;
+let c_EPOLLET:       u32 = 0x80000000;
 let c_EPOLL_CTL_ADD: i32 = 1;
 let c_EPOLL_CTL_DEL: i32 = 2;
 let c_EPOLL_CTL_MOD: i32 = 3;

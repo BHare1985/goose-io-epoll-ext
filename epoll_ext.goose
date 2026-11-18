@@ -1,7 +1,7 @@
 // The epoll event loop of goose-io: the contract (`goose_io`) on real sockets, on Linux, one `Loop` per thread.
 //
 //     import goose_io from "github.com/BHare1985/goose-io@v0.2";
-//     import epoll from "github.com/BHare1985/goose-io-epoll";
+//     import epoll from "github.com/BHare1985/goose-io-epoll-ext";
 //
 // It supplies the core and the half-close, sizing, abort, inspection and batching groups of contract 0.2 (not the unix group). A program
 // that runs libraries on it calls `goose_io::require_core(io)` and the check of each group from its root, as docs/event-loops.md says.
@@ -14,10 +14,11 @@
 //     address.goose   "ip:port" as sockets want it, and as the contract writes it
 //     config.goose    Limits
 //     sys.goose       the C layer's declarations (src/sys.c)
-namespace epoll;
+namespace epoll_ext;
 
 import .sys;
 import .config;
 import .address;
 import .engine;
 import .messages;
+import .forward;
