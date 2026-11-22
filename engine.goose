@@ -203,6 +203,8 @@ root struct Loop {
     _skip_drain_count:   bool            = false,
     _drained_conns:      i64             = 0,    // links ended Shutdown, a relayed pair counted once
     _finished:           bool            = false, // serve has returned: every operation does nothing
+    _send_flushed:       i64             = 0,     // bytes `send` wrote at once in this pass: once the pass has run 30 ms the rest waits for the next pass (a handler that always has more to send cannot starve the loop)
+    _deferred_flush:     u64[>..<]       = [],    // links whose queue waits for the next pass
     _pass_delivered:     i64             = 0,     // link events delivered in this pass (for PassEnd)
     _dialing:            i64             = 0,     // dials whose connect is still in progress
     _dial_due:           i64             = 0,     // the earliest connect deadline among them (0 = none known)
@@ -724,7 +726,12 @@ fn _send(io: Loop&, link: goose_io::Link, first: const u8[:], second: const u8[:
     io._append(i, first);
     io._append(i, second);
     s.last_active_ms = io._now_ms;
-    io._flush_output(i);
+    if io._send_flushed >= size * 4 && c_boottime_ms() - io._now_ms >= 30 {
+        io._deferred_flush.push(((i as u64) << 32) | s.gen);
+    } else {
+        io._send_flushed += total;
+        io._flush_output(i);
+    }
     goose_io::SendStatus.Sent
 }
 
@@ -1251,7 +1258,8 @@ fn serve<F>(io: Loop&) {
     var last_sweep: i64               = 0;
     loop {
         // work left over (events queued by what was set up before serve, or by the last pass): do not sleep
-        let wait_ms: i32 = if io._pending_head < io._pending.len { 0 } else { io._wait_limit(last_tick) };
+        io._send_flushed = 0;
+        let wait_ms: i32 = if io._pending_head < io._pending.len || io._deferred_flush.len > 0 { 0 } else { io._wait_limit(last_tick) };
         var n = c_epoll_wait(io._epoll_fd, events[0], 256, wait_ms);
         io._now_ms = c_boottime_ms();
         if n > 0 && wait_ms > 0 { n += io._batch_window(events, n, last_tick, last_sweep); }
@@ -1263,6 +1271,7 @@ fn serve<F>(io: Loop&) {
             for k in n { if (events[k].data & 0xff) != _EVENT_KIND_MESSAGE { io._dispatch_event(events[k].data, events[k].events); } }
         }
         io._run_ready();
+        io._flush_deferred();
         if io._limits_used && io._now_ms >= io._limit_next { io._limits_scan(); }
         io._deliver(F);
         io._enforce_stop();
@@ -1296,6 +1305,17 @@ fn serve<F>(io: Loop&) {
     c_close(io._epoll_fd);
     io._epoll_fd = -1;
     if io._attached { qput(_DrainReport { drained: io._drained_conns }); }
+}
+
+// The links whose queues were not written by `send` because the pass had written its share.
+fn _flush_deferred(io: Loop&) {
+    let end = io._deferred_flush.len;
+    for k in end {
+        let e = io._deferred_flush[k];
+        let i = (e >> 32) as i64;
+        if i < io._links.len && io._links[i].gen == (e & 0xffffffff) as u32 && io._links[i].state == _OPEN && io._links[i].out_count > 0 { io._flush_output(i); }
+    }
+    io._deferred_flush.clear();
 }
 
 // Ends a pass: one PassEnd if the pass delivered link events. Always the last event of its pass.
