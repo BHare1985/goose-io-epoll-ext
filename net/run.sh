@@ -34,9 +34,11 @@ for d in net/*_test.py net/tc/*_test.py; do
     if [ $bad -eq 0 ]; then echo "PASS  $(basename "$d")   $(tail -1 "$bin/out")   x$repeat"; else echo "FAIL  $(basename "$d")   $bad of $repeat repetitions failed"; failed=$((failed + 1)); fi
 done
 if [ -z "$filter" ] || case "unit" in *"$filter"*) true ;; *) false ;; esac; then
-    if ./build.sh unit/generation_test.goose "$bin/generation_unit" >"$bin/gu.log" 2>&1 && "$bin/generation_unit" >"$bin/gu.out" 2>&1; then
-        ran=$((ran + 1)); echo "PASS  unit/generation_test.goose   $(tail -1 "$bin/gu.out")"
-    else ran=$((ran + 1)); failed=$((failed + 1)); echo "FAIL  unit/generation_test.goose"; tail -5 "$bin/gu.log" "$bin/gu.out"; fi
+    for u in generation clock package_smoke; do
+        if ./build.sh unit/${u}_test.goose "$bin/${u}_unit" >"$bin/${u}_u.log" 2>&1 && "$bin/${u}_unit" >"$bin/${u}_u.out" 2>&1; then
+            ran=$((ran + 1)); echo "PASS  unit/${u}_test.goose   $(tail -1 "$bin/${u}_u.out")"
+        else ran=$((ran + 1)); failed=$((failed + 1)); echo "FAIL  unit/${u}_test.goose"; tail -5 "$bin/${u}_u.log" "$bin/${u}_u.out"; fi
+    done
 fi
 echo "$ran network tests, $failed failed"
 [ $failed -eq 0 ]
