@@ -555,25 +555,37 @@ fn waker(io: Loop&) -> goose_io::Waker {
 // From any thread: the value reaches the loop of the waker as one Woken. A full pipe is waited for briefly; the descriptors are
 // never closed, so a waker of a loop that has finished writes to a pipe nobody reads, and nothing else.
 fn wake(io: Loop&, target: goose_io::Waker, value: i64) {
+    io.wake_with(target, value, "");
+}
+
+// As wake, with up to 64 bytes (longer text is cut) that arrive in Woken.body. One record of 80 bytes: value, length, body.
+// A pipe write of at most PIPE_BUF bytes is atomic, so records from several threads never interleave.
+fn wake_with(io: Loop&, target: goose_io::Waker, value: i64, body: const u8[:]) {
     if target.id == 0 { return; }
-    var buf: u8[8] = [0; 8];
+    var buf: u8[80] = [0; 80];
     let v = value as u64;
     for k in 8 { buf[k] = ((v >> (8 * k)) & 0xff) as u8; }
+    let n = if body.len < 64 { body.len } else { 64 };
+    buf[8] = n as u8;
+    for k in n { buf[16 + k] = body[k]; }
     for attempt in 100 {
-        let n = c_pipe_write((target.id - 1) as i32, buf[0], 8);
-        if n == 8 { return; }
-        if n != -(c_EAGAIN as i64) && n != -(c_EINTR as i64) { return; }
+        let w = c_pipe_write((target.id - 1) as i32, buf[0], 80);
+        if w == 80 { return; }
+        if w != -(c_EAGAIN as i64) && w != -(c_EINTR as i64) { return; }
         _pause_milliseconds(1);
     }
 }
 
 fn _read_wakes(io: Loop&) {
-    var buf: u8[8] = [0; 8];
+    var buf: u8[80] = [0; 80];
     for n in 256 {
-        let r = c_pipe_read(io._wake_read, buf[0], 8);
-        if r != 8 { return; }
+        let r = c_pipe_read(io._wake_read, buf[0], 80);
+        if r != 80 { return; }
         var v: u64 = 0;
         for k in 8 { v |= (buf[k] as u64) << (8 * k); }
-        io._pending.push(_Pending { kind: _PENDING_WOKEN, slot: 0, gen: 0, listener: 0, why: goose_io::CloseReason.Local, value: v as i64 });
+        let len = buf[8] as i64;
+        let at = io._wake_bodies.len / 64;
+        for k in 64 { io._wake_bodies.push(if k < len { buf[16 + k] } else { 0 }); }
+        io._pending.push(_Pending { kind: _PENDING_WOKEN, slot: at as u32, gen: len as u32, listener: 0, why: goose_io::CloseReason.Local, value: v as i64 });
     }
 }

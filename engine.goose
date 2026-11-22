@@ -191,6 +191,7 @@ root struct Loop {
     _waiting_reads_head: i64             = 0,
     _scratch:            u8[16384]       = [0; 16384], // where the input of an orphan socket is dropped
     _pending:            _Pending[>..<]  = [], // events queued, drained by serve
+    _wake_bodies:        u8[>..<]        = [], // 64-byte chunks: the bodies of queued Woken events (slot = chunk, gen = length)
     _pending_head:       i64             = 0,
     _message_fd:         i32             = -1,    // this loop's end of its message pipe (messages.goose)
     _attached:           bool            = false, // attach() was called: serve reports to drain() when it ends
@@ -1068,7 +1069,9 @@ fn _deliver<F>(io: Loop&) {
         io._pending_head++;
         let i = r.slot as i64;
         if r.kind == _PENDING_WOKEN {
-            let e: goose_io::Event = goose_io::Event.Woken { value: r.value };
+            var body: u8[..64] = [];
+            body.append(io._wake_bodies[(r.slot as i64) * 64..][..r.gen as i64]);
+            let e: goose_io::Event = goose_io::Event.Woken { value: r.value, body: body };
             F(io, e);
             continue;
         }
@@ -1120,6 +1123,7 @@ fn _deliver<F>(io: Loop&) {
             io._release(i);
         }
     }
+    io._wake_bodies.clear();
     io._pending.clear();
     io._pending_head = 0;
 }

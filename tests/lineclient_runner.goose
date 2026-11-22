@@ -7,7 +7,7 @@
 // and at the end `DIALS <n>`. It needs only the core.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@c32fd8c3eb8dc245a694a05309bb541b5cad3188";
+import goose_io from "github.com/BHare1985/goose-io@a1172b7bfee6feb1ee8aef3b87af97269bd6232e";
 import goose_io.examples.lineclient.client;
 import epoll_ext from "..";
 
