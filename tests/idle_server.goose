@@ -2,7 +2,7 @@
 // It listens on 0.0.0.0 on the port given as the first argument, and drains for the number of milliseconds given as the second (30000 by default).
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.3";
+import goose_io from "github.com/BHare1985/goose-io@e4c2cd463f5c0e1fde999efd74870bbba1b77b04";
 import epoll_ext from "..";
 
 var address:  u8[>..] = [];

@@ -15,6 +15,6 @@ runs all of them (`conformance.sh`).
 net/run.sh                      # network tests on real peers: all of goose-io-epoll's, plus net/forward_test.py for the forwarding
 ```
 
-Fetches goose-io v0.3 with `goose fetch`; needs Goose v2026.4 and a C compiler.
+Fetches goose-io (pinned to a commit, not a release) with `goose fetch`; needs Goose v2026.4 and a C compiler.
 
 `forward.goose` is derived from the private tcprouter repository.
