@@ -205,13 +205,14 @@ void c_strerror(gs_rref out, int32_t err) {
 
 /* Waits up to `us` microseconds for `fd` to become readable (a worker's message pipe), and returns the microseconds actually waited (-1 on error).
    A message arriving ends the wait at once: that is the point of waiting on the pipe and not sleeping. */
-int64_t c_wait_readable_us(int32_t fd, int64_t us) {
+int64_t c_wait_readable_us(int32_t fd, int32_t fd2, int64_t us) {
     struct timespec t0, t1, to;
-    struct pollfd p;
-    p.fd = fd; p.events = POLLIN; p.revents = 0;
+    struct pollfd p[2];
+    p[0].fd = fd; p[0].events = POLLIN; p[0].revents = 0;
+    p[1].fd = fd2; p[1].events = POLLIN; p[1].revents = 0;   /* a negative fd is ignored by poll */
     to.tv_sec = us / 1000000; to.tv_nsec = (us % 1000000) * 1000;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    int rc = ppoll(&p, 1, &to, NULL);
+    int rc = ppoll(p, 2, &to, NULL);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     if (rc < 0 && errno != EINTR) return -1;
     return (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_nsec - t0.tv_nsec) / 1000;

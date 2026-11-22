@@ -39,6 +39,9 @@ fn _limit_index(l: goose_io::Limit) -> i64 {
 
 // --- relay ---------------------------------------------------------------------------------------
 
+// Buffers one direction of a relay reads per wakeup before others get a turn (about forward.goose's _WAKEUP_BUDGET with the default buffer size).
+let _RELAY_ROUNDS: i64 = 2;
+
 // The partner of a relayed link has bytes read and not yet written to it.
 fn _relay_pending_for(io: Loop&, i: i64) -> bool {
     let s .= io._links[i];
@@ -230,7 +233,7 @@ fn _relay_pump(io: Loop&, i: i64) {
             if !io._relay_eof(i) { return; }
             break;
         }
-        if !s._wants_read() || rounds >= 64 { break; }
+        if !s._wants_read() || rounds >= _RELAY_ROUNDS { break; }
         rounds++;
         let b = io._take_buffer();
         if b < 0 {
@@ -507,7 +510,7 @@ fn _limit_due(s: _Link&, k: i64) -> i64 {
     if k == 0 { from = if s.last_active_ms > s.started_ms { s.last_active_ms } else { s.started_ms }; }
     else if k == 1 { from = if s.last_read_ms > s.started_ms { s.last_read_ms } else { s.started_ms }; }
     else if k == 2 { if s.stall_since < 0 { return _FOREVER; } from = s.stall_since; }
-    else if k == 3 { if s.peer_end_ms < 0 { return _FOREVER; } from = s.peer_end_ms; }
+    else if k == 3 { if s.peer_end_ms < 0 { return _FOREVER; } from = if s.last_active_ms > s.peer_end_ms { s.last_active_ms } else { s.peer_end_ms }; }   // whatever crosses since moves it
     else { from = s.started_ms; }
     if s.limit_armed[k] > from { from = s.limit_armed[k]; }
     from + s.limit_ms[k]

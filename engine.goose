@@ -229,7 +229,7 @@ fn _ensure(io: Loop&) -> bool {
     io._started = true;
     io._now_ms = c_boottime_ms();
     if io.limits.buffer_size < 1024 { io.limits.buffer_size = 1024; }            // max_send is four buffers: at least 4096
-    if io.limits.buffers_per_loop < 4 { io.limits.buffers_per_loop = 4; }
+    if io.limits.buffers_per_loop < 1 { io.limits.buffers_per_loop = 1; }
     io._epoll_fd = c_epoll_create();
     io._epoll_fd >= 0
 }
@@ -1189,7 +1189,9 @@ fn _dispatch_event(io: Loop&, data: u64, events: u32) {
     if kind != _EVENT_KIND_LINK { return; }
     if s.state == _ENDED { return; }                                 // Closed is queued: the descriptor is closed when it has been handled
     if s.state == _DIALING { io._dial_finished(slot); return; }      // success, refusal or error: the socket says which
-    if (events & c_EPOLLERR) != 0 { io._end(slot, goose_io::CloseReason.PeerReset); return; }
+    // A relayed link reads first: bytes the peer sent before its RST are still in the receive queue and must reach the partner (RT-20a);
+    // the read then fails with the reset and ends the pair.
+    if (events & c_EPOLLERR) != 0 && !s.relayed { io._end(slot, goose_io::CloseReason.PeerReset); return; }
     if (events & c_EPOLLOUT) != 0 {
         io._flush_output(slot);
         if s.state != _OPEN { return; }
@@ -1205,22 +1207,24 @@ fn _dispatch_event(io: Loop&, data: u64, events: u32) {
 // Called when a pass found `n` events: if there are fewer than limits.batch_min_events, waits up to batch_max_wait_us for more and
 // appends what arrived to `events`; returns how many it appended. Off (both limits 0) it returns at once and costs nothing.
 // It never waits past a deadline (the next Tick, the next sweep, a tick_by time, a dial's deadline, a paused listener's resume),
-// is not entered while draining, waits on the loop's message pipe so a posted message ends it at once, and reads the clock again.
+// is not entered while draining, waits on the loop's message pipe and wake pipe so a posted message or a wake ends it at once, and reads the clock again.
 fn _batch_window(io: Loop&, events: c_EpollEvent[256]&, n: i32, last_tick: i64, last_sweep: i64) -> i32 {
     let min = io.limits.batch_min_events;
     var us = io.limits.batch_max_wait_us;
     if min <= 0 || us <= 0 || n >= min || n >= 256 || io._draining { return 0; }
-    for k in n { if (events[k].data & 0xff) == _EVENT_KIND_MESSAGE { return 0; } }
+    for k in n { let kind = events[k].data & 0xff;
+        if kind == _EVENT_KIND_MESSAGE || kind == _EVENT_KIND_WAKE { return 0; } }
     let now = c_boottime_ms();
     var next: i64 = last_tick + _TICK_PERIOD_MS;
     if last_sweep + 250 < next { next = last_sweep + 250; }
     if io._wake_at != 0 && io._wake_at < next { next = io._wake_at; }
+    if io._limits_used && io._limit_next < next { next = io._limit_next; }
     if io._dialing > 0 && io._dial_due != 0 && io._dial_due < next { next = io._dial_due; }
     for k in io._listeners.len { if io._listeners[k].resume_at != 0 && io._listeners[k].resume_at < next { next = io._listeners[k].resume_at; } }
     let room_us = (next - now) * 1000;
     if room_us < us { us = room_us; }
     if us <= 0 { return 0; }
-    let slept = c_wait_readable_us(io._message_fd, us);
+    let slept = c_wait_readable_us(io._message_fd, io._wake_read, us);
     io._stats.batch_waits++;
     if slept > 0 { io._stats.batch_wait_us += slept; }
     let m = c_epoll_wait(io._epoll_fd, events[n], 256 - n, 0);        // everything that arrived meanwhile
