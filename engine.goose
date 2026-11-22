@@ -74,6 +74,7 @@ struct Stats {
     batch_waits:      i64,    // batching windows entered: 0 unless limits.batch_min_events and batch_max_wait_us are both set
     batch_wait_us:    i64,    // microseconds slept in them
     waiting_len:      i64,    // entries in the list of reads waiting for a pool buffer (a gauge)
+    ready_len:        i64,    // entries in the list of forwarded links with bytes left to move (a gauge: stays small under any load)
 }
 
 fn _reason_index(r: goose_io::CloseReason) -> i64 {
@@ -203,8 +204,7 @@ root struct Loop {
     _dial_due:           i64             = 0,     // the earliest connect deadline among them (0 = none known)
     _wake_at:            i64             = 0,     // the earliest time asked for with tick_by, or 0
     _now_ms:             i64             = 0,     // CLOCK_BOOTTIME at the start of the current pass of the loop
-    _fwd_listener:       u32             = 0, // the listener whose connections are forwarded (forward.goose), 0 = none
-    _fwd_target:         _ParsedAddress  = _ParsedAddress { false, [0; 16], 0 },
+    _fwd_routes:         _FwdRoute[>..]  = [], // listeners whose connections are forwarded, each with its target (forward.goose)
     _ready:              u64[>..<]       = [], // forwarded links with work left after a pass
     _ready_head:         i64             = 0,
     _limits_used:        bool            = false, // some link has a limit or a write deadline: the loop scans for them
@@ -561,7 +561,8 @@ fn _new_link(io: Loop&, k: i64, fd: i32) {
         return;
     }
     let i = io._fresh_link(fd, (k + 1) as u32, _OPEN);
-    if io._fwd_listener == (k + 1) as u32 { io._start_forward(i); return; }
+    let r = io._fwd_route_of((k + 1) as u32);
+    if r >= 0 { io._start_forward(i, r); return; }
     io._queue(_PENDING_OPENED, i);
     io._update_interest(i);
 }
@@ -970,6 +971,7 @@ fn draining(io: Loop&) -> bool { io._draining || io._finished }
 fn stats(io: Loop&) -> Stats {
     var s = io._stats;
     s.waiting_len = io._waiting_reads.len;
+    s.ready_len = io._ready.len;
     s
 }
 

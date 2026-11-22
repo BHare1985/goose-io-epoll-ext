@@ -8,19 +8,20 @@ cd "$(dirname "$0")/.."
 filter="${1:-}"; repeat="${REPEAT:-1}"
 bin="$(mktemp -d "${TMPDIR:-/tmp}/epoll-net.XXXXXX")"; trap 'rm -rf "$bin"' EXIT
 export NET_BIN="$bin"
+${CC:-cc} -O1 -o "$bin/c_echo_server" net/tc/echo_server.c && export ECHO_SERVER="$bin/c_echo_server" FORWARD_SERVER="$bin/forward_server"
 failed=0; ran=0
 for src in tests/*.goose http_hello.goose forward_server.goose; do
     [ -e "$src" ] || continue
     name="$(basename "$src" .goose)"
     # a program is built only when some selected driver needs it (its name appears in the driver)
     needed=0
-    for d in net/*_test.py; do case "$d" in *"$filter"*) grep -q "\"$name\"" "$d" && needed=1 ;; esac; done
+    for d in net/*_test.py net/tc/*_test.py; do case "$d" in *"$filter"*) grep -q "\"$name\"" "$d" && needed=1; case "$d" in net/tc/*) [ "$name" = forward_server ] && needed=1 ;; esac ;; esac; done
     [ $needed -eq 1 ] || continue
     if ! ./build.sh "$src" "$bin/$name" >"$bin/$name.log" 2>&1; then
         echo "BUILD FAILED  $src"; sed 's/^/    /' "$bin/$name.log" | head -20; failed=$((failed + 1))
     fi
 done
-for d in net/*_test.py; do
+for d in net/*_test.py net/tc/*_test.py; do
     [ -e "$d" ] || continue
     case "$d" in *"$filter"*) ;; *) continue ;; esac
     ran=$((ran + 1))

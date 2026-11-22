@@ -47,9 +47,16 @@ struct _Direction {
 fn forward_from(io: Loop&, l: goose_io::Listener, target: const u8[:]) -> bool {
     var p = _ParsedAddress { false, [0; 16], 0 };
     if !_parse_address(target, p, false) { return false; }
-    io._fwd_target = p;
-    io._fwd_listener = l.id;
+    io._fwd_routes.append([_FwdRoute { l.id, p }]);
     true
+}
+
+struct _FwdRoute { listener: u32, target: _ParsedAddress }
+
+// Index of the forwarding route of listener `id`, or -1.
+fn _fwd_route_of(io: Loop&, id: u32) -> i64 {
+    for r in io._fwd_routes.len { if io._fwd_routes[r].listener == id { return r; } }
+    -1
 }
 
 fn _is_forwarded(s: _Link&) -> bool { s.state == _CONNECTING || s.state == _FORWARDING }
@@ -65,7 +72,7 @@ fn _direction_of(s: _Link&, up: bool) -> _Direction& {
 }
 
 // An accepted socket on the forwarding listener: join epoll edge-triggered, then connect to the target.
-fn _start_forward(io: Loop&, i: i64) {
+fn _start_forward(io: Loop&, i: i64, route: i64) {
     let s .= io._links[i];
     s.state = _CONNECTING;
     let mask = c_EPOLLIN | c_EPOLLOUT | c_EPOLLRDHUP | c_EPOLLET;
@@ -73,7 +80,7 @@ fn _start_forward(io: Loop&, i: i64) {
     s.registered = true;
     s.mask = mask;
     s.started_ms = io._now_ms;
-    let sfd = c_connect_start(io._fwd_target.v6, io._fwd_target.ip, io._fwd_target.port);
+    let sfd = c_connect_start(io._fwd_routes[route].target.v6, io._fwd_routes[route].target.ip, io._fwd_routes[route].target.port);
     if sfd < 0 { io._stats.connect_failures++; io._end_forward(i, goose_io::CloseReason.ConnectFailed { kind: _connect_kind(-sfd) }); return; }
     s.server_fd = sfd;
     s.server_mask = c_EPOLLIN | c_EPOLLOUT | c_EPOLLRDHUP | c_EPOLLET;
