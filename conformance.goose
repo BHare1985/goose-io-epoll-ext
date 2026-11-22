@@ -13,7 +13,7 @@
 //   answers  a listener the kernel keeps completing connects for, so a dial made while the loop is draining still opens
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@e4c2cd463f5c0e1fde999efd74870bbba1b77b04";
+import goose_io from "github.com/BHare1985/goose-io@c32fd8c3eb8dc245a694a05309bb541b5cad3188";
 import goose_io.conformance.suite;
 import epoll_ext from ".";
 

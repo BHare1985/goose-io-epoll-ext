@@ -378,6 +378,34 @@ fn peek(io: Loop&, link: goose_io::Link) -> const u8[:] {
     io._buffer_slice(s.rbuf)[..n]
 }
 
+// Drops the first byte_count held bytes (at most what peek shows) of an open link that is not relayed; no Input, no Data.
+fn discard_input(io: Loop&, link: goose_io::Link, byte_count: i64) -> i64 {
+    if io._finished { return 0; }
+    let i = io._find(link);
+    if i < 0 { return 0; }
+    let s .= io._links[i];
+    if s.state != _OPEN || s.relayed || !s.data_pending || s.rbuf < 0 || s.delivering { return 0; }
+    var n = s.rlen as i64;
+    let bound = io._peek_bound();
+    if n > bound { n = bound; }
+    if byte_count < n { n = byte_count; }
+    if n <= 0 { return 0; }
+    let buffer = io._buffer_slice(s.rbuf);
+    let rest = s.rlen as i64 - n;
+    if rest > 0 {
+        buffer[..rest].move_from(buffer[n..n + rest]);
+        s.rlen = rest as i32;
+    } else {
+        let b = s.rbuf;
+        s.rbuf = -1;
+        s.rlen = 0;
+        s.data_pending = false;
+        io._give_back_buffer(b);
+    }
+    io._update_interest(i);
+    n
+}
+
 // --- revoke --------------------------------------------------------------------------------------
 
 fn discard_unsent(io: Loop&, link: goose_io::Link) -> i64 {
