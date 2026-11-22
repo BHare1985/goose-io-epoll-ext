@@ -500,7 +500,7 @@ fn set_limit(io: Loop&, link: goose_io::Link, limit: goose_io::Limit, ms: i64) {
     let k = _limit_index(limit);
     s.limit_fired[k] = false;
     if ms <= 0 { s.limit_ms[k] = 0; return; }
-    s.limit_ms[k] = ms;
+    s.limit_ms[k] = ms as i32;
     s.limit_armed[k] = io._now_ms;
     io._limits_used = true;
     io._limit_next = 0;

@@ -101,7 +101,7 @@ struct _Link {
     last_active_ms:    i64,      // when bytes last moved in either direction (idle and half-close timeouts)
     half_closed_at_ms: i64,      // when the first direction ended, or 0
     closing_at_ms:     i64,      // when close was called, or 0
-    connect_ms:        i64,      // a dial's own timeout, 0 = limits.connect_timeout_ms
+    connect_ms:        i32,      // a dial's own timeout, 0 = limits.connect_timeout_ms
     out_buffers:       i32[4],   // the send queue, oldest first, at most 4 pool buffers
     out_lengths:       i32[4],
     out_count:         u8,
@@ -139,7 +139,7 @@ struct _Link {
     carried:           i64,        // relayed: bytes written to the partner
     relay_eof_passed:  bool,       // this link's end of stream has been passed to its partner
     write_deadline:    i64,        // write_deadline, 0 = none
-    limit_ms:          i64[5],
+    limit_ms:          i32[5],
     limit_armed:       i64[5],
     limit_fired:       bool[5],
     last_read_ms:      i64,
@@ -576,7 +576,7 @@ fn dial(io: Loop&, address: const u8[:], connect_ms: i64) -> goose_io::Link {
     let started = io._ensure();
     let i = io._fresh_link(-1, 0, _DIALING);
     let s .= io._links[i];
-    s.connect_ms = connect_ms;
+    s.connect_ms = connect_ms as i32;
     io._dialing++;
     let link = goose_io::Link { slot: i as u32, gen: s.gen };
     if !started || io._live > io.limits.max_links {
