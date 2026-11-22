@@ -10,5 +10,6 @@ struct Limits {
     buffer_size:           i64 = 32768,  // bytes of one pool buffer: the most one Data carries, and a quarter of max_send
     buffers_per_loop:      i64 = 4096,   // buffers in the pool, grown lazily
     batch_min_events:      i64 = 0,      // batching window, OFF when 0: a pass that finds fewer events than this waits up to batch_max_wait_us for more
+    peek_bound:            i64 = 4096,   // the most bytes peek shows and wait_input holds (the peek group); clamped to buffer_size
     batch_max_wait_us:     i64 = 0,      // microseconds; 0 = off. Never waits past a deadline; a posted message ends the wait at once
 }

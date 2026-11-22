@@ -7,7 +7,7 @@
 // (--stat-ms is accepted and ignored.) Stops on SIGTERM or SIGINT, draining for up to five seconds.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.2";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import epoll_ext from ".";
 
 var listen_addr: u8[>..] = [];

@@ -5,7 +5,7 @@
 # A part that fails in any repetition fails the run. Unlike the in-memory event loop the real one is not deterministic, so the
 # output of repetitions is not compared: a failure in any of them is a failure.
 set -u
-here="$(cd "$(dirname "$0")" && pwd)"; goose_io="${GOOSE_IO:-${GOOSE_HOME:-$HOME/.goose}/pkg/github.com/BHare1985/goose-io/v0.2}"; cd "$here"
+here="$(cd "$(dirname "$0")" && pwd)"; goose_io="${GOOSE_IO:-${GOOSE_HOME:-$HOME/.goose}/pkg/github.com/BHare1985/goose-io/v0.3}"; cd "$here"
 repeat=1; only=
 while [ $# -gt 0 ]; do
     case "$1" in

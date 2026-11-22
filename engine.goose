@@ -39,6 +39,7 @@ let _EVENT_KIND_LISTENER: u64 = 1;
 let _EVENT_KIND_LINK:     u64 = 2;
 let _EVENT_KIND_ORPHAN:   u64 = 3;    // a socket of a link that has ended, kept open to read and drop the peer's input (see _finish_close)
 let _EVENT_KIND_MESSAGE:  u64 = 4;
+let _EVENT_KIND_WAKE:     u64 = 8;    // the read end of this loop's wake pipe (groups.goose)
 let _WAITER_READER:       u64 = 1;    // in the low byte of a _waiting_reads entry: a read waits for a pool buffer
 let _WAITER_WRITER:       u64 = 2;    // a refused send waits for a pool buffer
 
@@ -48,6 +49,9 @@ let _PENDING_OPENED:   u8 = 1;
 let _PENDING_DATA:     u8 = 2;
 let _PENDING_WRITABLE: u8 = 3;
 let _PENDING_CLOSED:   u8 = 4;
+let _PENDING_INPUT:    u8 = 6;        // the peek group: held bytes are ready (or the peer's end came)
+let _PENDING_EXPIRED:  u8 = 7;        // the limits group: value = the limit's index
+let _PENDING_WOKEN:    u8 = 8;        // the wake group: value = what was passed to wake
 let _PENDING_EOF:      u8 = 5;        // the peer's end of stream was read; what it means is decided when this record is reached (keep-open window)
 
 // --- statistics ----------------------------------------------------------------------------------
@@ -127,6 +131,23 @@ struct _Link {
     queued:            bool,       // on the ready list
     up:                _Direction, // client to server
     down:              _Direction, // server to client
+    // --- the proxy groups (groups.goose) ---
+    wait_n:            i64,        // wait_input: bytes to hold before an Input, 0 = deliver Data
+    input_sent:        bool,       // the Input for this wait_input has been queued
+    eof_held:          bool,       // the peer's end of stream was read while bytes were being held: its record waits for wait_input(0)
+    delivering:        bool,       // the Data handler of this link is running
+    relayed:           bool,
+    partner:           i64,        // the other end of the relay
+    rpos:              i32,        // relayed: bytes of rbuf already written to the partner
+    carried:           i64,        // relayed: bytes written to the partner
+    relay_eof_passed:  bool,       // this link's end of stream has been passed to its partner
+    write_deadline:    i64,        // write_deadline, 0 = none
+    limit_ms:          i64[5],
+    limit_armed:       i64[5],
+    limit_fired:       bool[5],
+    last_read_ms:      i64,
+    stall_since:       i64,        // -1 = nothing waits for the transport
+    peer_end_ms:       i64,        // -1 = the peer's stream has not ended
 }
 
 struct _Pending {
@@ -135,6 +156,7 @@ struct _Pending {
     gen:      u32,
     listener: u32,
     why:      goose_io::CloseReason,
+    value:    i64,
 }
 
 struct _Listening {
@@ -184,6 +206,10 @@ root struct Loop {
     _fwd_target:         _ParsedAddress  = _ParsedAddress { false, [0; 16], 0 },
     _ready:              u64[>..<]       = [], // forwarded links with work left after a pass
     _ready_head:         i64             = 0,
+    _limits_used:        bool            = false, // some link has a limit or a write deadline: the loop scans for them
+    _limit_next:         i64             = 0,     // the earliest time a limit or a deadline may fall due; 0 = scan now
+    _wake_read:          i32             = -1,    // the wake pipe (the wake group): made by the first waker()
+    _wake_write:         i32             = -1,
 }
 
 // --- small helpers -------------------------------------------------------------------------------
@@ -311,7 +337,7 @@ fn _wake_waiting(io: Loop&) {
 
 fn _queue(io: Loop&, kind: u8, i: i64) {
     let s .= io._links[i];
-    io._pending.push(_Pending { kind: kind, slot: i as u32, gen: s.gen, listener: s.listener, why: goose_io::CloseReason.Local });
+    io._pending.push(_Pending { kind: kind, slot: i as u32, gen: s.gen, listener: s.listener, why: goose_io::CloseReason.Local, value: 0 });
 }
 
 // The link of a handle: its index, or -1 when it was never issued, is stale, or the slot is free.
@@ -336,6 +362,9 @@ fn _fresh_link(io: Loop&, fd: i32, listener: u32, state: u8) -> i64 {
         want_writable:     false, closing: false, closing_reason: goose_io::CloseReason.Local, orphan: false, eof_seen: false,
         eof_handled:       false, keep_open: false, window: false, shut_wr_pending: false, wr_shut: false, local_closed: false,
         peer:              [0; 18], peer_family: 0, server_fd: -1, server_mask: 0, ready: 0, queued: false, up: _Direction { .. }, down: _Direction { .. },
+        wait_n:            0, input_sent: false, eof_held: false, delivering: false, relayed: false, partner: -1, rpos: 0, carried: 0,
+        relay_eof_passed:  false, write_deadline: 0, limit_ms: [0; 5], limit_armed: [0; 5], limit_fired: [false; 5], last_read_ms: now,
+        stall_since:       -1, peer_end_ms: -1,
     };
     var i: i64 = 0;
     if io._free_links.len > 0 {
@@ -355,7 +384,8 @@ fn _fresh_link(io: Loop&, fd: i32, listener: u32, state: u8) -> i64 {
 // --- epoll interest ------------------------------------------------------------------------------
 
 fn _wants_read(s: _Link&) -> bool {
-    !s.closing && !s.paused && !s.eof_seen && !s.waiting
+    if s.relayed { return !s.closing && !s.eof_seen && !s.waiting && s.rbuf < 0; }
+    !s.closing && !s.paused && !s.eof_seen && !s.waiting && !(s.wait_n > 0 && s.input_sent)
 }
 
 fn _set_interest(io: Loop&, i: i64, mask: u32) {
@@ -379,7 +409,7 @@ fn _update_interest(io: Loop&, i: i64) {
     // A pending Data record does not clear EPOLLIN: serve handles every queued record before the next epoll_wait, and
     // _read_link will not read while one is pending, so the mask change (an epoll_ctl per request, twice) would be for nothing.
     if s._wants_read() { m |= c_EPOLLIN; }
-    if s.out_count > 0 { m |= c_EPOLLOUT; }
+    if s.out_count > 0 || io._relay_pending_for(i) { m |= c_EPOLLOUT; }
     io._set_interest(i, m);
 }
 
@@ -388,6 +418,12 @@ fn _update_interest(io: Loop&, i: i64) {
 // The link ends: its sending queue is returned, its Closed is queued, and the slot and the descriptor are KEPT until the
 // handlers of that Closed have returned (_release). After this the caller must not use the link for anything but peer_address.
 fn _end(io: Loop&, i: i64, reason: goose_io::CloseReason) {
+    let s .= io._links[i];
+    if s.state == _OPEN && s.relayed { io._end_pair(i, reason); return; }
+    io._end_one(i, reason);
+}
+
+fn _end_one(io: Loop&, i: i64, reason: goose_io::CloseReason) {
     let s .= io._links[i];
     if s.state != _OPEN && s.state != _DIALING { return; }
     var why = reason;
@@ -411,7 +447,7 @@ fn _end(io: Loop&, i: i64, reason: goose_io::CloseReason) {
         s.data_pending = false;
         io._give_back_buffer(b);
     }
-    io._pending.push(_Pending { kind: _PENDING_CLOSED, slot: i as u32, gen: s.gen, listener: s.listener, why: why });
+    io._pending.push(_Pending { kind: _PENDING_CLOSED, slot: i as u32, gen: s.gen, listener: s.listener, why: why, value: 0 });
     io._stats.closed[_reason_index(why)]++;
     for k in out_n { io._give_back_buffer(out_ids[k]); }
 }
@@ -620,7 +656,7 @@ fn max_send(io: Loop&) -> i64 {
 // How many bytes `send` would accept right now: the free room of the 4-buffer queue, 0 when the link cannot send.
 fn _send_room_of(io: Loop&, i: i64) -> i64 {
     let s .= io._links[i];
-    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending { return 0; }
+    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending || s.relayed { return 0; }
     let size = io.limits.buffer_size;
     let tail_room = if s.out_count > 0 { size - s.out_lengths[s.out_count - 1] } else { 0 };
     let queue_free = 4 - s.out_count;
@@ -654,7 +690,8 @@ fn _send(io: Loop&, link: goose_io::Link, first: const u8[:], second: const u8[:
     if i < 0 { return goose_io::SendStatus.Closed; }
     let s .= io._links[i];
     if s.state == _DIALING { return goose_io::SendStatus.NotOpen; }
-    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending { return goose_io::SendStatus.Closed; }
+    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending || s.relayed { return goose_io::SendStatus.Closed; }
+    if io._deadline_passed(i) { return goose_io::SendStatus.Closed; }
     let total = first.len + second.len;
     if total == 0 { return goose_io::SendStatus.Sent; }
     let size = io.limits.buffer_size;
@@ -709,10 +746,13 @@ fn _append(io: Loop&, i: i64, bytes: const u8[:]) {
 fn _flush_output(io: Loop&, i: i64) {
     let s .= io._links[i];
     if s.state != _OPEN { return; }
+    var progress = false;
     while s.out_count > 0 {
         let rest = io._buffer_slice(s.out_buffers[0])[s.out_pos..s.out_lengths[0]];
+        if io._deadline_passed(i) { return; }
         let n = c_send(s.fd, rest[0], rest.len);
         if n > 0 {
+            progress = true;
             s.out_pos += n as i32;
             s.last_active_ms = io._now_ms;                 // bytes are moving: not idle, however long the queue takes to drain
             io._stats.bytes_out += n;
@@ -745,6 +785,8 @@ fn _flush_output(io: Loop&, i: i64) {
         s.refused = 0;
         io._queue(_PENDING_WRITABLE, i);
     }
+    io._stall_update(i, progress);
+    if s.relayed && s.out_count == 0 { io._relay_pump(s.partner); }
     io._update_interest(i);
 }
 
@@ -754,7 +796,10 @@ fn pause_reading(io: Loop&, link: goose_io::Link, paused: bool) {
     if i < 0 { return; }
     let s .= io._links[i];
     if (s.state != _OPEN && s.state != _DIALING) || s.closing { return; }
+    if s.relayed { return; }
     s.paused = paused;
+    if !paused && s.wait_n == 0 { io._release_held(i); }
+    if !paused { io._input_check(i); }
     if !paused && s.data_pending && !s.data_queued && s.state == _OPEN {      // bytes read while it was paused: handed over now
         s.data_queued = true;
         io._queue(_PENDING_DATA, i);
@@ -770,6 +815,7 @@ fn close(io: Loop&, link: goose_io::Link) {
     if i < 0 { return; }
     let s .= io._links[i];
     if s.closing || s.state == _ENDED { return; }
+    if s.relayed { io._close_pair(i, false); return; }
     s.local_closed = true;
     if s.state == _DIALING {
         io._end(i, goose_io::CloseReason.Local);
@@ -842,6 +888,7 @@ fn reset(io: Loop&, link: goose_io::Link) {
     if i < 0 { return; }
     let s .= io._links[i];
     if s.state == _ENDED { return; }
+    if s.relayed { io._close_pair(i, true); return; }
     s.local_closed = true;
     if s.state == _OPEN && s.fd >= 0 { c_linger0(s.fd); }
     s.closing = true;
@@ -866,7 +913,7 @@ fn shutdown_write(io: Loop&, link: goose_io::Link) {
     let i = io._find(link);
     if i < 0 { return; }
     let s .= io._links[i];
-    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending { return; }
+    if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending || s.relayed { return; }
     s.shut_wr_pending = true;
     io._flush_output(i);
 }
@@ -949,6 +996,7 @@ fn _wait_limit(io: Loop&, last_tick: i64) -> i32 {
     if io._dialing > 0 && io._dial_due != 0 && io._dial_due - now < limit { limit = io._dial_due - now; }
     if io._wake_at != 0 && io._wake_at - now < limit { limit = io._wake_at - now; }
     if io._draining && io._drain_deadline_ms - now < limit { limit = io._drain_deadline_ms - now; }
+    if io._limits_used && io._limit_next - now < limit { limit = io._limit_next - now; }
     if limit < 0 { 0 } else { limit as i32 }
 }
 
@@ -957,6 +1005,8 @@ fn _wait_limit(io: Loop&, last_tick: i64) -> i32 {
 // One read; the bytes stay in the link's buffer and a Data record is queued, until the application has handled them.
 fn _read_link(io: Loop&, i: i64) {
     let s .= io._links[i];
+    if s.relayed { io._relay_pump(i); return; }
+    if s.wait_n > 0 { io._read_hold(i); return; }
     if !s._wants_read() || s.data_pending { return; }
     let b = io._take_buffer();
     if b < 0 {                                           // pool empty: wait for a buffer, do not read
@@ -972,6 +1022,7 @@ fn _read_link(io: Loop&, i: i64) {
         s.rbuf = b;
         s.rlen = n as i32;
         s.last_active_ms = io._now_ms;
+        s.last_read_ms = io._now_ms;
         s.data_pending = true;
         s.data_queued = true;
         io._stats.bytes_in += n;
@@ -992,11 +1043,13 @@ fn _read_link(io: Loop&, i: i64) {
 // The peer finished sending, and the record of it has been reached: end the link, or tell the application (keep-open).
 fn _handle_eof<F>(io: Loop&, i: i64) {
     let s .= io._links[i];
-    if s.state != _OPEN || s.closing || s.eof_handled { return; }
+    if s.state != _OPEN || s.closing || s.eof_handled || s.relayed { return; }
+    if s.wait_n > 0 { s.eof_held = true; io._input_check(i); return; }
     s.eof_handled = true;
     if s.keep_open {                                       // the application wants to finish its answer
         if s.wr_shut { io._end(i, goose_io::CloseReason.PeerClosed); return; }
         s.half_closed_at_ms = io._now_ms;                   // the half-close limit bounds the wait for the application
+        s.peer_end_ms = io._now_ms;
         io._update_interest(i);                             // input has ended: stop watching it, or a level-triggered socket at end of stream would wake the loop for ever
         io._pass_delivered++;
         let e: goose_io::Event = goose_io::Event.PeerEof { link: io._link_of(i) };
@@ -1014,6 +1067,11 @@ fn _deliver<F>(io: Loop&) {
         let r = io._pending[io._pending_head];
         io._pending_head++;
         let i = r.slot as i64;
+        if r.kind == _PENDING_WOKEN {
+            let e: goose_io::Event = goose_io::Event.Woken { value: r.value };
+            F(io, e);
+            continue;
+        }
         if i >= io._links.len { continue; }
         if io._links[i].gen != r.gen || io._links[i].state == _FREE { continue; }
         let link = goose_io::Link { slot: r.slot, gen: r.gen };
@@ -1028,17 +1086,30 @@ fn _deliver<F>(io: Loop&) {
             let s .= io._links[i];
             s.data_queued = false;
             if !s.data_pending || s.local_closed || s.rbuf < 0 { continue; }
-            if s.paused { continue; }                                // held in the buffer until reading is resumed
+            if s.paused || s.relayed || s.wait_n > 0 { continue; }   // held in the buffer until reading is resumed (or the relay took them)
             let bytes = io._buffer_slice(s.rbuf)[..s.rlen];
             io._pass_delivered++;
             let e: goose_io::Event = goose_io::Event.Data { link: link, bytes: bytes };
+            s.delivering = true;
             F(io, e);
+            if io._links[i].gen == r.gen { io._links[i].delivering = false; }
             io._data_delivered(i, r.gen);
         } else if r.kind == _PENDING_WRITABLE {
             let s .= io._links[i];
-            if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending { continue; }     // nothing can fit now: the event would be untrue
+            if s.state != _OPEN || s.closing || s.wr_shut || s.shut_wr_pending || s.relayed { continue; }     // nothing can fit now: the event would be untrue
             io._pass_delivered++;
             let e: goose_io::Event = goose_io::Event.Writable { link: link };
+            F(io, e);
+        } else if r.kind == _PENDING_INPUT {
+            let s .= io._links[i];
+            if s.state != _OPEN || s.relayed || s.closing || s.paused || s.wait_n <= 0 { s.input_sent = s.input_sent && s.wait_n > 0; continue; }
+            io._pass_delivered++;
+            let e: goose_io::Event = goose_io::Event.Input { link: link, available: s.rlen as i64 };
+            F(io, e);
+        } else if r.kind == _PENDING_EXPIRED {
+            if io._links[i].state != _OPEN { continue; }
+            io._pass_delivered++;
+            let e: goose_io::Event = goose_io::Event.Expired { link: link, limit: _limit_of(r.value) };
             F(io, e);
         } else if r.kind == _PENDING_EOF {
             io._handle_eof(i, F);
@@ -1063,6 +1134,7 @@ fn _data_delivered(io: Loop&, i: i64, gen: u32) {
     s.data_pending = false;
     if b >= 0 { io._give_back_buffer(b); }
     if s.state == _OPEN { io._update_interest(i); }
+    if s.relayed { io._relay_pump(i); }
 }
 
 // --- timeouts ------------------------------------------------------------------------------------
@@ -1099,6 +1171,7 @@ fn _dispatch_event(io: Loop&, data: u64, events: u32) {
         return;
     }
     if kind == _EVENT_KIND_ORPHAN { io._drain_orphan(slot); return; }
+    if kind == _EVENT_KIND_WAKE { io._read_wakes(); return; }
     if kind != _EVENT_KIND_LINK && kind != _EVENT_KIND_SERVER { io._stats.bad_events++; return; }
     if slot >= io._links.len { io._stats.bad_events++; return; }
     let s .= io._links[slot];
@@ -1113,7 +1186,7 @@ fn _dispatch_event(io: Loop&, data: u64, events: u32) {
         if s.state != _OPEN { return; }
     }
     if (events & (c_EPOLLIN | c_EPOLLHUP)) != 0 {
-        if (events & c_EPOLLIN) == 0 && !s._wants_read() { io._end(slot, goose_io::CloseReason.PeerReset); return; }
+        if (events & c_EPOLLIN) == 0 && !s._wants_read() && !s.relayed { io._end(slot, goose_io::CloseReason.PeerReset); return; }
         io._read_link(slot);
     }
 }
@@ -1171,6 +1244,7 @@ fn serve<F>(io: Loop&) {
             for k in n { if (events[k].data & 0xff) != _EVENT_KIND_MESSAGE { io._dispatch_event(events[k].data, events[k].events); } }
         }
         io._run_ready();
+        if io._limits_used && io._now_ms >= io._limit_next { io._limits_scan(); }
         io._deliver(F);
         io._enforce_stop();
         io._deliver(F);

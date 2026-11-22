@@ -13,7 +13,7 @@
 //   answers  a listener the kernel keeps completing connects for, so a dial made while the loop is draining still opens
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.2";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import goose_io.conformance.suite;
 import epoll_ext from ".";
 
@@ -81,11 +81,22 @@ fn main() {
     goose_io::require_sizing(io);
     goose_io::require_abort(io);
     goose_io::require_inspection(io);
-    let fixture = goose_io_conformance::Fixture { silent: texts[..silent_end], held: texts[silent_end..held_end], refused: texts[answers_end..], answers: texts[held_end..answers_end], unix: "" };
+    goose_io::require_relay(io);
+    goose_io::require_peek(io);
+    goose_io::require_revoke(io);
+    goose_io::require_wake(io);
+    goose_io::require_limits(io);
+    io.limits.peek_bound = 16;
+    let fixture = goose_io_conformance::Fixture { silent: texts[..silent_end], held: texts[silent_end..held_end], refused: texts[answers_end..], answers: texts[held_end..answers_end], unix: "", peek_bound: 16 };
     if group == "half-close" { exit(goose_io_conformance::conformance_half_close_part(io, fixture, part)); }
     if group == "sizing" { exit(goose_io_conformance::conformance_sizing_part(io, fixture, part)); }
     if group == "abort" { exit(goose_io_conformance::conformance_abort_part(io, fixture, part)); }
     if group == "inspection" { exit(goose_io_conformance::conformance_inspection_part(io, fixture, part)); }
     if group == "batching" { exit(goose_io_conformance::conformance_batching_part(io, fixture, part)); }
+    if group == "relay" { exit(goose_io_conformance::conformance_relay_part(io, fixture, part)); }
+    if group == "peek" { exit(goose_io_conformance::conformance_peek_part(io, fixture, part)); }
+    if group == "revoke" { exit(goose_io_conformance::conformance_revoke_part(io, fixture, part)); }
+    if group == "wake" { exit(goose_io_conformance::conformance_wake_part(io, fixture, part)); }
+    if group == "limits" { exit(goose_io_conformance::conformance_limits_part(io, fixture, part)); }
     exit(goose_io_conformance::conformance_core_part(io, fixture, part));
 }

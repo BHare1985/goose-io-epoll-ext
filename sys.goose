@@ -33,6 +33,8 @@ let c_ECONNREFUSED:  i32 = 111;
 let c_EHOSTUNREACH:  i32 = 113;
 let c_ETIMEDOUT:     i32 = 110;
 let c_EPROTO:        i32 = 71;
+let c_ECONNRESET:    i32 = 104;
+let c_EPIPE:         i32 = 32;
 
 extern fn c_epoll_create() -> i32;
 extern fn c_epoll_ctl(ep: i32, op: i32, fd: i32, events: u32, data: u64) -> i32;
@@ -53,6 +55,7 @@ extern fn c_linger0(fd: i32);
 extern fn c_strerror(out: u8[>..]&, err: i32);
 
 extern fn c_pipe(fds: i32[2]&) -> i32;
+extern fn c_wake_pipe(fds: i32[2]&) -> i32;
 extern fn c_pipe_write(fd: i32, buf: const u8&, len: i64) -> i64;
 extern fn c_pipe_read(fd: i32, buf: u8&, len: i64) -> i64;
 

@@ -4,6 +4,9 @@
 where the loop moves a forwarded connection's bytes to its target and back itself. This repository is that loop's code with one commit
 on top of goose-io-epoll's; `git diff <first commit> HEAD` is the extension (namespace `epoll_ext`).
 
+`groups.goose` supplies the proxy groups of contract 0.3 on real sockets: relay, peek, revoke, wake and limits. The conformance suite
+runs all of them (`conformance.sh`).
+
 `forward_server.goose` is the proof: a server forwarding every connection of its listener to one target.
 
 ```bash
@@ -12,6 +15,6 @@ on top of goose-io-epoll's; `git diff <first commit> HEAD` is the extension (nam
 net/run.sh                      # network tests on real peers: all of goose-io-epoll's, plus net/forward_test.py for the forwarding
 ```
 
-Fetches goose-io v0.2 with `goose fetch`; needs Goose v2026.4 and a C compiler.
+Fetches goose-io v0.3 with `goose fetch`; needs Goose v2026.4 and a C compiler.
 
 `forward.goose` is derived from the private tcprouter repository.

@@ -11,7 +11,7 @@
 // Needs: core (and half-close for keep=1).
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.2";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import goose_io.examples.echo.echo;
 import epoll_ext from "..";
 

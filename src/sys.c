@@ -240,6 +240,12 @@ int32_t c_pipe(int32_t *fds) {
     return fcntl(fds[0], F_SETFL, O_NONBLOCK) < 0 ? -errno : 0;
 }
 
+/* A pipe whose two ends are both non-blocking (the wake group: a waker writes from any thread and must never block on a loop that has finished). */
+int32_t c_wake_pipe(int32_t *fds) {
+    if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) < 0) return -errno;
+    return 0;
+}
+
 int64_t c_pipe_write(int32_t fd, const uint8_t *buf, int64_t len) {
     ssize_t n = write(fd, buf, (size_t)len);
     return n < 0 ? -errno : n;
