@@ -1072,7 +1072,8 @@ fn _handle_eof<F>(io: Loop&, i: i64) {
 
 // Calls the application's block for every queued event, in order, including those the block itself causes.
 fn _deliver<F>(io: Loop&) {
-    while io._pending_head < io._pending.len {
+    let end = io._pending.len;                       // only what is queued now: events the handler causes wait for the next pass, so the loop gets back to epoll (wakes, other links)
+    while io._pending_head < end {
         let r = io._pending[io._pending_head];
         io._pending_head++;
         let i = r.slot as i64;
@@ -1131,9 +1132,11 @@ fn _deliver<F>(io: Loop&) {
             io._release(i);
         }
     }
-    io._wake_bodies.clear();
-    io._pending.clear();
-    io._pending_head = 0;
+    if io._pending_head >= io._pending.len {
+        io._wake_bodies.clear();
+        io._pending.clear();
+        io._pending_head = 0;
+    }
 }
 
 // The block has seen the bytes: the buffer goes back and the link may be read again.
