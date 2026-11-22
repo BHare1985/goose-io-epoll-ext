@@ -132,6 +132,17 @@ int32_t c_connect_result(int32_t fd) {
     return err;
 }
 
+/* The bytes waiting, copied and left in the socket: the count, 0 at end of stream, or -errno (-EAGAIN when nothing is waiting). */
+int64_t c_peek(int32_t fd, uint8_t *buf, int64_t len) {
+    ssize_t n = recv(fd, buf, (size_t)len, MSG_PEEK);
+    return n < 0 ? -errno : n;
+}
+
+/* SO_RCVLOWAT: epoll reports the socket readable only once this many bytes wait (or the peer ended). */
+void c_set_rcvlowat(int32_t fd, int32_t n) {
+    setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &n, sizeof n);
+}
+
 /* Bytes read, 0 at end of stream, or -errno (-EAGAIN when nothing is waiting). */
 int64_t c_recv(int32_t fd, uint8_t *buf, int64_t len) {
     ssize_t n = recv(fd, buf, (size_t)len, 0);

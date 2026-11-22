@@ -93,6 +93,7 @@ fn _take_over(io: Loop&, i: i64) {
     let s .= io._links[i];
     s.paused = false;
     s.wait_n = 0;
+    io._hold_end(i);
     s.input_sent = false;
     s.rpos = 0;
     if s.data_pending && s.rbuf >= 0 {
@@ -273,6 +274,7 @@ fn _peek_bound(io: Loop&) -> i64 {
     var b = io.limits.peek_bound;
     if b < 1 { b = 1; }
     if b > io.limits.buffer_size { b = io.limits.buffer_size; }
+    if b > io._scratch.len { b = io._scratch.len; }
     b
 }
 
@@ -283,63 +285,54 @@ fn _input_check(io: Loop&, i: i64) {
     var need = s.wait_n;
     let bound = io._peek_bound();
     if need > bound { need = bound; }
-    if s.rlen as i64 >= need || s.eof_seen {
+    if s.khold >= need || s.eof_held {
         s.input_sent = true;
         io._queue(_PENDING_INPUT, i);
         io._update_interest(i);
     }
 }
 
-// Reads into the held bytes, up to the bound.
-fn _read_hold(io: Loop&, i: i64) {
+// Held bytes stay in the kernel (a link that waits for a hello costs the loop no buffer): they are counted with MSG_PEEK, and SO_RCVLOWAT keeps
+// epoll quiet until enough have arrived. `woken` is true when epoll said the socket is readable: then a look that finds nothing new means the
+// peer ended.
+fn _hold_look(io: Loop&, i: i64, woken: bool) {
     let s .= io._links[i];
-    if !s._wants_read() { return; }
+    if s.state != _OPEN || s.relayed || s.closing || s.paused || s.wait_n <= 0 || s.eof_held { return; }
     let bound = io._peek_bound();
-    let have = if s.rbuf >= 0 && s.data_pending { s.rlen as i64 } else { 0 };
-    if have >= bound { return; }
-    var b = s.rbuf;
-    var fresh = false;
-    if !(s.rbuf >= 0 && s.data_pending) {
-        b = io._take_buffer();
-        fresh = true;
-        if b < 0 {
-            s.waiting = true;
-            io._waiting_reads.push(_pack_event_data(_WAITER_READER, i, s.gen));
-            io._stats.buffer_waits++;
-            io._update_interest(i);
-            return;
-        }
-    }
-    let buffer = io._buffer_slice(b);
-    let n = c_recv(s.fd, buffer[have], bound - have);
+    let n = c_peek(s.fd, io._scratch[0], bound);
     if n > 0 {
-        s.rbuf = b;
-        s.rlen = (have + n) as i32;
-        s.data_pending = true;
-        s.data_queued = false;
-        s.last_active_ms = io._now_ms;
-        s.last_read_ms = io._now_ms;
-        io._stats.bytes_in += n;
-        io._input_check(i);
-        io._update_interest(i);
-        return;
-    }
-    if fresh { io._give_back_buffer(b); }
-    if n == 0 {
-        s.eof_seen = true;
+        if n > s.khold { s.last_active_ms = io._now_ms; s.last_read_ms = io._now_ms; }
+        else if woken { s.eof_held = true; }
+        s.khold = n;
+    } else if n == 0 {
         s.eof_held = true;
-        io._input_check(i);
-        io._update_interest(i);
+    } else if n == -(c_EAGAIN as i64) || n == -(c_EINTR as i64) {
+        // nothing yet
+    } else {
+        io._end(i, goose_io::CloseReason.PeerReset);
         return;
     }
-    if n == -(c_EAGAIN as i64) || n == -(c_EINTR as i64) { io._update_interest(i); return; }
-    io._end(i, goose_io::CloseReason.PeerReset);
+    io._input_check(i);
+    io._update_interest(i);
+}
+
+fn _hold_read(io: Loop&, i: i64) { io._hold_look(i, true); }
+
+// Back to ordinary reading: the low-water mark returns to 1.
+fn _hold_end(io: Loop&, i: i64) {
+    let s .= io._links[i];
+    if s.lowat_raised && s.fd >= 0 { c_set_rcvlowat(s.fd, 1); s.lowat_raised = false; }
+    s.khold = 0;
 }
 
 // wait_input(0) or the end of a pause: what is held is handed over as Data, then the end of stream.
 fn _release_held(io: Loop&, i: i64) {
     let s .= io._links[i];
     if s.state != _OPEN || s.wait_n > 0 || s.paused || s.relayed { return; }
+    io._hold_end(i);
+    s.eof_held = false;
+    s.input_sent = false;
+    if !s.data_pending { io._read_link(i); if s.state != _OPEN { return; } }
     if s.data_pending && !s.data_queued && s.rbuf >= 0 && !s.delivering {
         s.data_queued = true;
         io._queue(_PENDING_DATA, i);
@@ -361,7 +354,12 @@ fn wait_input(io: Loop&, link: goose_io::Link, byte_count: i64) {
     if s.wait_n == 0 {
         io._release_held(i);
     } else {
-        io._input_check(i);
+        var low = s.wait_n;
+        let bound = io._peek_bound();
+        if low > bound { low = bound; }
+        if low > 1 && s.fd >= 0 { c_set_rcvlowat(s.fd, low as i32); s.lowat_raised = true; }
+        else if s.lowat_raised && s.fd >= 0 { c_set_rcvlowat(s.fd, 1); s.lowat_raised = false; }
+        io._hold_look(i, false);
     }
     io._update_interest(i);
 }
@@ -371,6 +369,11 @@ fn peek(io: Loop&, link: goose_io::Link) -> const u8[:] {
     let i = io._find(link);
     if i < 0 { return ""; }
     let s .= io._links[i];
+    if s.state == _OPEN && !s.relayed && s.wait_n > 0 && !s.delivering {
+        let got = c_peek(s.fd, io._scratch[0], io._peek_bound());
+        if got <= 0 { return ""; }
+        return io._scratch[..got];
+    }
     if s.state != _OPEN || s.relayed || !s.data_pending || s.rbuf < 0 || s.delivering { return ""; }
     var n = s.rlen as i64;
     let bound = io._peek_bound();
@@ -384,6 +387,21 @@ fn discard_input(io: Loop&, link: goose_io::Link, byte_count: i64) -> i64 {
     let i = io._find(link);
     if i < 0 { return 0; }
     let s .= io._links[i];
+    if s.state == _OPEN && !s.relayed && s.wait_n > 0 && !s.delivering {
+        var left = byte_count;
+        if left > s.khold { left = s.khold; }
+        var dropped: i64 = 0;
+        while left > 0 {
+            let take = if left < io._scratch.len { left } else { io._scratch.len };
+            let got = c_recv(s.fd, io._scratch[0], take);
+            if got <= 0 { break; }
+            dropped += got;
+            left -= got;
+        }
+        s.khold -= dropped;
+        io._stats.bytes_in += dropped;
+        return dropped;
+    }
     if s.state != _OPEN || s.relayed || !s.data_pending || s.rbuf < 0 || s.delivering { return 0; }
     var n = s.rlen as i64;
     let bound = io._peek_bound();

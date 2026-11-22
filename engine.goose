@@ -134,6 +134,8 @@ struct _Link {
     down:              _Direction, // server to client
     // --- the proxy groups (groups.goose) ---
     wait_n:            i64,        // wait_input: bytes to hold before an Input, 0 = deliver Data
+    khold:             i64,        // wait_input: bytes known to wait in the kernel (they are not read until peek/relay/wait_input(0))
+    lowat_raised:      bool,       // SO_RCVLOWAT is above 1 on the socket
     input_sent:        bool,       // the Input for this wait_input has been queued
     eof_held:          bool,       // the peer's end of stream was read while bytes were being held: its record waits for wait_input(0)
     delivering:        bool,       // the Data handler of this link is running
@@ -190,7 +192,7 @@ root struct Loop {
     _free_buffers:       i32[>..<]       = [],
     _waiting_reads:      u64[>..<]       = [], // reads and sends waiting for a buffer, oldest first from _waiting_reads_head
     _waiting_reads_head: i64             = 0,
-    _scratch:            u8[16384]       = [0; 16384], // where the input of an orphan socket is dropped
+    _scratch:            u8[65536]       = [0; 65536], // where the input of an orphan socket is dropped, and the bytes peek shows
     _pending:            _Pending[>..<]  = [], // events queued, drained by serve
     _wake_bodies:        u8[>..<]        = [], // 64-byte chunks: the bodies of queued Woken events (slot = chunk, gen = length)
     _pending_head:       i64             = 0,
@@ -363,7 +365,7 @@ fn _fresh_link(io: Loop&, fd: i32, listener: u32, state: u8) -> i64 {
         want_writable:     false, closing: false, closing_reason: goose_io::CloseReason.Local, orphan: false, eof_seen: false,
         eof_handled:       false, keep_open: false, window: false, shut_wr_pending: false, wr_shut: false, local_closed: false,
         peer:              [0; 18], peer_family: 0, server_fd: -1, server_mask: 0, ready: 0, queued: false, up: _Direction { .. }, down: _Direction { .. },
-        wait_n:            0, input_sent: false, eof_held: false, delivering: false, relayed: false, partner: -1, rpos: 0, carried: 0,
+        wait_n:            0, khold: 0, lowat_raised: false, input_sent: false, eof_held: false, delivering: false, relayed: false, partner: -1, rpos: 0, carried: 0,
         relay_eof_passed:  false, write_deadline: 0, limit_ms: [0; 5], limit_armed: [0; 5], limit_fired: [false; 5], last_read_ms: now,
         stall_since:       -1, peer_end_ms: -1,
     };
@@ -801,6 +803,7 @@ fn pause_reading(io: Loop&, link: goose_io::Link, paused: bool) {
     if s.relayed { return; }
     s.paused = paused;
     if !paused && s.wait_n == 0 { io._release_held(i); }
+    if !paused && s.wait_n > 0 { io._hold_look(i, false); }
     if !paused { io._input_check(i); }
     if !paused && s.data_pending && !s.data_queued && s.state == _OPEN {      // bytes read while it was paused: handed over now
         s.data_queued = true;
@@ -1009,7 +1012,7 @@ fn _wait_limit(io: Loop&, last_tick: i64) -> i32 {
 fn _read_link(io: Loop&, i: i64) {
     let s .= io._links[i];
     if s.relayed { io._relay_pump(i); return; }
-    if s.wait_n > 0 { io._read_hold(i); return; }
+    if s.wait_n > 0 { io._hold_read(i); return; }
     if !s._wants_read() || s.data_pending { return; }
     let b = io._take_buffer();
     if b < 0 {                                           // pool empty: wait for a buffer, do not read
@@ -1109,7 +1112,7 @@ fn _deliver<F>(io: Loop&) {
             let s .= io._links[i];
             if s.state != _OPEN || s.relayed || s.closing || s.paused || s.wait_n <= 0 { s.input_sent = s.input_sent && s.wait_n > 0; continue; }
             io._pass_delivered++;
-            let e: goose_io::Event = goose_io::Event.Input { link: link, available: s.rlen as i64 };
+            let e: goose_io::Event = goose_io::Event.Input { link: link, available: s.khold };
             F(io, e);
         } else if r.kind == _PENDING_EXPIRED {
             if io._links[i].state != _OPEN { continue; }
