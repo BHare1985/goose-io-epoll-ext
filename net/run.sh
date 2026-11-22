@@ -33,5 +33,10 @@ for d in net/*_test.py net/tc/*_test.py; do
     done
     if [ $bad -eq 0 ]; then echo "PASS  $(basename "$d")   $(tail -1 "$bin/out")   x$repeat"; else echo "FAIL  $(basename "$d")   $bad of $repeat repetitions failed"; failed=$((failed + 1)); fi
 done
+if [ -z "$filter" ] || case "unit" in *"$filter"*) true ;; *) false ;; esac; then
+    if ./build.sh unit/generation_test.goose "$bin/generation_unit" >"$bin/gu.log" 2>&1 && "$bin/generation_unit" >"$bin/gu.out" 2>&1; then
+        ran=$((ran + 1)); echo "PASS  unit/generation_test.goose   $(tail -1 "$bin/gu.out")"
+    else ran=$((ran + 1)); failed=$((failed + 1)); echo "FAIL  unit/generation_test.goose"; tail -5 "$bin/gu.log" "$bin/gu.out"; fi
+fi
 echo "$ran network tests, $failed failed"
 [ $failed -eq 0 ]
