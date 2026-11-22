@@ -200,6 +200,8 @@ root struct Loop {
     _attached:           bool            = false, // attach() was called: serve reports to drain() when it ends
     _draining:           bool            = false,
     _drain_deadline_ms:  i64             = 0,
+    _skip_drain_count:   bool            = false,
+    _drained_conns:      i64             = 0,    // links ended Shutdown, a relayed pair counted once
     _finished:           bool            = false, // serve has returned: every operation does nothing
     _pass_delivered:     i64             = 0,     // link events delivered in this pass (for PassEnd)
     _dialing:            i64             = 0,     // dials whose connect is still in progress
@@ -452,6 +454,7 @@ fn _end_one(io: Loop&, i: i64, reason: goose_io::CloseReason) {
     }
     io._pending.push(_Pending { kind: _PENDING_CLOSED, slot: i as u32, gen: s.gen, listener: s.listener, why: why, value: 0 });
     io._stats.closed[_reason_index(why)]++;
+    if _reason_index(why) == 6 && !io._skip_drain_count { io._drained_conns++; }     // a relayed pair is one connection
     for k in out_n { io._give_back_buffer(out_ids[k]); }
 }
 
@@ -1289,7 +1292,7 @@ fn serve<F>(io: Loop&) {
     for k in io._orphans.len { if io._orphans[k].fd >= 0 { c_close(io._orphans[k].fd); io._orphans[k].fd = -1; } }
     c_close(io._epoll_fd);
     io._epoll_fd = -1;
-    if io._attached { qput(_DrainReport { drained: io._stats.closed[6] }); }
+    if io._attached { qput(_DrainReport { drained: io._drained_conns }); }
 }
 
 // Ends a pass: one PassEnd if the pass delivered link events. Always the last event of its pass.

@@ -147,7 +147,9 @@ fn _end_pair(io: Loop&, i: i64, reason: goose_io::CloseReason) {
     io._end_one(i, reason);
     if pi >= 0 {
         if hard && io._links[pi].fd >= 0 { c_linger0(io._links[pi].fd); }
+        io._skip_drain_count = true;
         io._end_one(pi, partner_why);
+        io._skip_drain_count = false;
     }
 }
 
