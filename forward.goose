@@ -34,6 +34,17 @@ let _READY_SERVER_ENDED: u8 = 32;
 let _WAKEUP_BUDGET: i64 = 65536;      // bytes one direction may move per wakeup before others get a turn
 
 // One direction of a forwarded link. It owns at most ONE pool buffer, and only while it holds bytes it has read but not yet written.
+// What only a loop-forwarded link needs (the built-in pump): kept apart from _Link, indexed by the link's slot, and grown only when a
+// listener forwards, so a loop whose application relays through the contract pays nothing for it.
+struct _Fwd {
+    server_fd:   i32 = -1,
+    server_mask: u32 = 0,
+    ready:       u8 = 0,
+    queued:      bool = false,
+    up:          _Direction = _Direction { .. },
+    down:        _Direction = _Direction { .. },
+}
+
 struct _Direction {
     buf:     i32  = -1,
     len:     i32  = 0,
@@ -64,16 +75,19 @@ fn _is_forwarded(s: _Link&) -> bool { s.state == _CONNECTING || s.state == _FORW
 fn _flag_readable(up: bool) -> u8 { if up { _READY_CLIENT_IN } else { _READY_SERVER_IN } }
 fn _flag_writable(up: bool) -> u8 { if up { _READY_SERVER_OUT } else { _READY_CLIENT_OUT } }
 fn _flag_ended(up: bool) -> u8 { if up { _READY_CLIENT_ENDED } else { _READY_SERVER_ENDED } }
-fn _forget(s: _Link&, flag: u8) { s.ready = s.ready & (255 - flag); }
+fn _forget(f: _Fwd&, flag: u8) { f.ready = f.ready & (255 - flag); }
 
-fn _direction_of(s: _Link&, up: bool) -> _Direction& {
-    if up { return s.up; }
-    s.down
+fn _direction_of(f: _Fwd&, up: bool) -> _Direction& {
+    if up { return f.up; }
+    f.down
 }
 
 // An accepted socket on the forwarding listener: join epoll edge-triggered, then connect to the target.
 fn _start_forward(io: Loop&, i: i64, route: i64) {
     let s .= io._links[i];
+    while io._fwd.len <= i { io._fwd.push(_Fwd { .. }); }
+    io._fwd[i] = _Fwd { .. };
+    let f .= io._fwd[i];
     s.state = _CONNECTING;
     let mask = c_EPOLLIN | c_EPOLLOUT | c_EPOLLRDHUP | c_EPOLLET;
     if c_epoll_ctl(io._epoll_fd, c_EPOLL_CTL_ADD, s.fd, mask, _pack_event_data(_EVENT_KIND_LINK, i, s.gen)) < 0 { io._end_forward(i, goose_io::CloseReason.Error); return; }
@@ -82,21 +96,22 @@ fn _start_forward(io: Loop&, i: i64, route: i64) {
     s.started_ms = io._now_ms;
     let sfd = c_connect_start(io._fwd_routes[route].target.v6, io._fwd_routes[route].target.ip, io._fwd_routes[route].target.port);
     if sfd < 0 { io._stats.connect_failures++; io._end_forward(i, goose_io::CloseReason.ConnectFailed { kind: _connect_kind(-sfd) }); return; }
-    s.server_fd = sfd;
-    s.server_mask = c_EPOLLIN | c_EPOLLOUT | c_EPOLLRDHUP | c_EPOLLET;
-    if c_epoll_ctl(io._epoll_fd, c_EPOLL_CTL_ADD, sfd, s.server_mask, _pack_event_data(_EVENT_KIND_SERVER, i, s.gen)) < 0 { io._end_forward(i, goose_io::CloseReason.Error); }
+    f.server_fd = sfd;
+    f.server_mask = c_EPOLLIN | c_EPOLLOUT | c_EPOLLRDHUP | c_EPOLLET;
+    if c_epoll_ctl(io._epoll_fd, c_EPOLL_CTL_ADD, sfd, f.server_mask, _pack_event_data(_EVENT_KIND_SERVER, i, s.gen)) < 0 { io._end_forward(i, goose_io::CloseReason.Error); }
 }
 
 // Closes both sockets, returns the buffers and frees the slot at once (a forwarded link has no Closed to wait for).
 fn _end_forward(io: Loop&, i: i64, reason: goose_io::CloseReason) {
     let s .= io._links[i];
+    let f .= io._fwd[i];
     if !s._is_forwarded() { return; }
     if s.fd >= 0 { c_close(s.fd); s.fd = -1; }
-    if s.server_fd >= 0 { c_close(s.server_fd); s.server_fd = -1; }
-    let up_buf = s.up.buf;
-    let down_buf = s.down.buf;
-    s.up = _Direction { .. };
-    s.down = _Direction { .. };
+    if f.server_fd >= 0 { c_close(f.server_fd); f.server_fd = -1; }
+    let up_buf = f.up.buf;
+    let down_buf = f.down.buf;
+    f.up = _Direction { .. };
+    f.down = _Direction { .. };
     s.state = _FREE;
     s.registered = false;
     s.mask = 0;
@@ -111,22 +126,24 @@ fn _end_forward(io: Loop&, i: i64, reason: goose_io::CloseReason) {
 
 fn _connect_finished(io: Loop&, i: i64) {
     let s .= io._links[i];
-    let err = c_connect_result(s.server_fd);
+    let f .= io._fwd[i];
+    let err = c_connect_result(f.server_fd);
     if err != 0 {
         io._stats.connect_failures++;
         io._end_forward(i, goose_io::CloseReason.ConnectFailed { kind: _connect_kind(err) });
         return;
     }
     s.state = _FORWARDING;
-    s.ready |= _READY_SERVER_OUT;                          // a finished connect is writable; its edge was this event
+    f.ready |= _READY_SERVER_OUT;                          // a finished connect is writable; its edge was this event
     io._pump(i);
 }
 
 // Adds a link to the ready list: it has work left that no event will announce.
 fn _queue_ready(io: Loop&, i: i64) {
     let s .= io._links[i];
-    if s.state == _FREE || s.queued { return; }
-    s.queued = true;
+    let f .= io._fwd[i];
+    if s.state == _FREE || f.queued { return; }
+    f.queued = true;
     io._ready.push(_pack_event_data(0, i, s.gen));
 }
 
@@ -139,8 +156,9 @@ fn _run_ready(io: Loop&) {
         let slot = (e >> 32) as i64;
         let gen = ((e >> 8) & 0xffffff) as u32;
         let s .= io._links[slot];
+        let f .= io._fwd[slot];
         if s.state != _FREE && s.gen == gen {
-            s.queued = false;
+            f.queued = false;
             if s.state == _FORWARDING { io._pump(slot); }
         }
     }
@@ -169,19 +187,20 @@ fn _pump(io: Loop&, i: i64) {
 // give or take. True when it stopped only because it moved _WAKEUP_BUDGET bytes (the connection is queued to go on).
 fn _pump_direction(io: Loop&, i: i64, up: bool) -> bool {
     let s .= io._links[i];
-    let dir .= s._direction_of(up);
-    let src = if up { s.fd } else { s.server_fd };
-    let dst = if up { s.server_fd } else { s.fd };
+    let f .= io._fwd[i];
+    let dir .= f._direction_of(up);
+    let src = if up { s.fd } else { f.server_fd };
+    let dst = if up { f.server_fd } else { s.fd };
     let readable = _flag_readable(up);
     let writable = _flag_writable(up);
     var moved: i64 = 0;
     loop {
         if dir.len > dir.pos {                                        // bytes read but not written yet
-            if (s.ready & writable) == 0 { return false; }            // destination full: its writable edge restarts us
+            if (f.ready & writable) == 0 { return false; }            // destination full: its writable edge restarts us
             if !io._write_buffer(i, up, dst) { return false; }
         }
         if dir.eof || dir.waiting { return false; }
-        if (s.ready & readable) == 0 { return false; }
+        if (f.ready & readable) == 0 { return false; }
         if moved >= _WAKEUP_BUDGET { return true; }
 
         let b = io._take_buffer();
@@ -200,7 +219,7 @@ fn _pump_direction(io: Loop&, i: i64, up: bool) -> bool {
             moved += n;
             s.last_active_ms = io._now_ms;
             // A short read means the socket is drained, unless its peer already ended: then the next read says so.
-            if n < buf.len && (s.ready & _flag_ended(up)) == 0 { s._forget(readable); }
+            if n < buf.len && (f.ready & _flag_ended(up)) == 0 { f._forget(readable); }
             continue;
         }
         // Nothing to keep: give the buffer back before anything else.
@@ -212,12 +231,12 @@ fn _pump_direction(io: Loop&, i: i64, up: bool) -> bool {
         if n == 0 {                                                   // the source ended: tell the destination, stop reading
             dir.eof = true;
             if s.half_closed_at_ms == 0 { s.half_closed_at_ms = io._now_ms; }
-            s._shutdown_unless_closing(up, dst);
+            f._shutdown_unless_closing(up, dst);
             dir.shut = true;
-            if s.up.eof && s.up.shut && s.down.eof && s.down.shut { io._end_forward(i, goose_io::CloseReason.PeerClosed); }
+            if f.up.eof && f.up.shut && f.down.eof && f.down.shut { io._end_forward(i, goose_io::CloseReason.PeerClosed); }
             return false;
         }
-        if n == -(c_EAGAIN as i64) { s._forget(readable); return false; }
+        if n == -(c_EAGAIN as i64) { f._forget(readable); return false; }
         if n == -(c_EINTR as i64) { return true; }                    // interrupted: try again on the next pass
         io._end_forward(i, goose_io::CloseReason.PeerReset);
         return false;
@@ -228,7 +247,8 @@ fn _pump_direction(io: Loop&, i: i64, up: bool) -> bool {
 // (its writable flag is cleared) or the link was ended.
 fn _write_buffer(io: Loop&, i: i64, up: bool, dst: i32) -> bool {
     let s .= io._links[i];
-    let dir .= s._direction_of(up);
+    let f .= io._fwd[i];
+    let dir .= f._direction_of(up);
     while dir.pos < dir.len {
         let buf = io._buffer_slice(dir.buf);
         let rest = buf[dir.pos..dir.len];
@@ -238,7 +258,7 @@ fn _write_buffer(io: Loop&, i: i64, up: bool, dst: i32) -> bool {
             s.last_active_ms = io._now_ms;
             if up { io._stats.bytes_in += n; } else { io._stats.bytes_out += n; }
         } else if n == -(c_EAGAIN as i64) {
-            s._forget(_flag_writable(up));
+            f._forget(_flag_writable(up));
             return false;
         } else if n != -(c_EINTR as i64) {
             io._end_forward(i, goose_io::CloseReason.PeerReset);
@@ -256,8 +276,8 @@ fn _write_buffer(io: Loop&, i: i64, up: bool, dst: i32) -> bool {
 
 // Tells the destination that this direction ended, unless the other direction has already ended too: then the link closes right away
 // and the close itself sends the FIN (one system call less per connection).
-fn _shutdown_unless_closing(s: _Link&, up: bool, dst: i32) {
-    let other .= s._direction_of(!up);
+fn _shutdown_unless_closing(f: _Fwd&, up: bool, dst: i32) {
+    let other .= f._direction_of(!up);
     if other.eof && other.shut { return; }
     c_shutdown_wr(dst);
 }
@@ -265,13 +285,14 @@ fn _shutdown_unless_closing(s: _Link&, up: bool, dst: i32) {
 // The forwarding arm of the loop's dispatch: the event only says what the sockets can do now.
 fn _dispatch_forward(io: Loop&, slot: i64, kind: u64, events: u32) {
     let s .= io._links[slot];
+    let f .= io._fwd[slot];
     let from_client = kind == _EVENT_KIND_LINK;
     let in_flag = if from_client { _READY_CLIENT_IN } else { _READY_SERVER_IN };
     let out_flag = if from_client { _READY_CLIENT_OUT } else { _READY_SERVER_OUT };
     let ended_flag = if from_client { _READY_CLIENT_ENDED } else { _READY_SERVER_ENDED };
-    if (events & (c_EPOLLIN | c_EPOLLHUP | c_EPOLLRDHUP)) != 0 { s.ready |= in_flag; }
-    if (events & (c_EPOLLOUT | c_EPOLLHUP)) != 0 { s.ready |= out_flag; }       // a hung-up socket "can write": the write fails and says so
-    if (events & (c_EPOLLRDHUP | c_EPOLLHUP)) != 0 { s.ready |= ended_flag; }
+    if (events & (c_EPOLLIN | c_EPOLLHUP | c_EPOLLRDHUP)) != 0 { f.ready |= in_flag; }
+    if (events & (c_EPOLLOUT | c_EPOLLHUP)) != 0 { f.ready |= out_flag; }       // a hung-up socket "can write": the write fails and says so
+    if (events & (c_EPOLLRDHUP | c_EPOLLHUP)) != 0 { f.ready |= ended_flag; }
     if s.state == _CONNECTING {
         // A client that hangs up while we connect is only noted (its flags): the connect finishes or fails first.
         if !from_client { io._connect_finished(slot); }
@@ -281,9 +302,9 @@ fn _dispatch_forward(io: Loop&, slot: i64, kind: u64, events: u32) {
         if from_client { io._end_forward(slot, goose_io::CloseReason.PeerReset); return; }
         // The backend reset the connection. Bytes it sent before the RST are still readable (Linux), and "answer, then reset" is what a server does
         // when it closes with unread request bytes: deliver them first. The next read says ECONNRESET and closes.
-        s.ready |= in_flag | out_flag;
+        f.ready |= in_flag | out_flag;
         io._pump(slot);
-        if s.state == _FORWARDING && !s.queued && s.up.len <= s.up.pos && s.down.len <= s.down.pos { io._end_forward(slot, goose_io::CloseReason.PeerReset); }
+        if s.state == _FORWARDING && !f.queued && f.up.len <= f.up.pos && f.down.len <= f.down.pos { io._end_forward(slot, goose_io::CloseReason.PeerReset); }
         return;
     }
     io._pump(slot);
@@ -292,9 +313,10 @@ fn _dispatch_forward(io: Loop&, slot: i64, kind: u64, events: u32) {
 // The idle, half-close and connect limits of a forwarded link (called from the sweep).
 fn _sweep_forward(io: Loop&, i: i64, now: i64) {
     let s .= io._links[i];
+    let f .= io._fwd[i];
     let limits = io.limits;
     if s.state == _CONNECTING {
-        if s.server_fd >= 0 && now - s.started_ms >= limits.connect_timeout_ms { io._stats.connect_failures++; io._end_forward(i, goose_io::CloseReason.ConnectFailed { kind: goose_io::ConnectFailure.TimedOut }); }
+        if f.server_fd >= 0 && now - s.started_ms >= limits.connect_timeout_ms { io._stats.connect_failures++; io._end_forward(i, goose_io::CloseReason.ConnectFailed { kind: goose_io::ConnectFailure.TimedOut }); }
     } else if s.half_closed_at_ms != 0 {
         let since = if s.last_active_ms > s.half_closed_at_ms { s.last_active_ms } else { s.half_closed_at_ms };
         if now - since >= limits.half_close_timeout_ms { io._end_forward(i, goose_io::CloseReason.HalfCloseTimeout); }

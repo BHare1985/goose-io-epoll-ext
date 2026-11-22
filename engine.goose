@@ -126,12 +126,6 @@ struct _Link {
     local_closed:      bool,     // the application called close or reset
     peer:              u8[18],   // the peer's address, kept when a reset has made the socket forget it (_end)
     peer_family:       i32,      // 4 or 6 when `peer` holds one, else 0
-    server_fd:         i32,      // forwarding (forward.goose): the socket to the target
-    server_mask:       u32,
-    ready:             u8,         // edge-triggered readiness flags of a forwarded link
-    queued:            bool,       // on the ready list
-    up:                _Direction, // client to server
-    down:              _Direction, // server to client
     // --- the proxy groups (groups.goose) ---
     wait_n:            i64,        // wait_input: bytes to hold before an Input, 0 = deliver Data
     khold:             i64,        // wait_input: bytes known to wait in the kernel (they are not read until peek/relay/wait_input(0))
@@ -211,6 +205,7 @@ root struct Loop {
     _wake_at:            i64             = 0,     // the earliest time asked for with tick_by, or 0
     _now_ms:             i64             = 0,     // CLOCK_BOOTTIME at the start of the current pass of the loop
     _fwd_routes:         _FwdRoute[>..]  = [], // listeners whose connections are forwarded, each with its target (forward.goose)
+    _fwd:                _Fwd[>..]       = [],    // by link slot, only for forwarded links (forward.goose)
     _ready:              u64[>..<]       = [], // forwarded links with work left after a pass
     _ready_head:         i64             = 0,
     _limits_used:        bool            = false, // some link has a limit or a write deadline: the loop scans for them
@@ -317,7 +312,7 @@ fn _wake_waiting(io: Loop&) {
                         io._waiting_reads.push(_pack_event_data(_WAITER_WRITER, slot, gen));     // not enough room yet: wait again
                     }
                 } else if (e & 0xff) == _WAITER_FWD_UP || (e & 0xff) == _WAITER_FWD_DOWN {
-                    let dir .= s._direction_of((e & 0xff) == _WAITER_FWD_UP);
+                    let dir .= io._fwd[slot]._direction_of((e & 0xff) == _WAITER_FWD_UP);
                     if dir.waiting { dir.waiting = false; io._queue_ready(slot); break; }
                 } else if s.waiting {
                     s.waiting = false;
@@ -368,7 +363,7 @@ fn _fresh_link(io: Loop&, fd: i32, listener: u32, state: u8) -> i64 {
         out_pos:           0, rbuf: -1, rlen: 0, refused: 0, paused: false, data_pending: false, data_queued: false, waiting: false,
         want_writable:     false, closing: false, closing_reason: goose_io::CloseReason.Local, orphan: false, eof_seen: false,
         eof_handled:       false, keep_open: false, window: false, shut_wr_pending: false, wr_shut: false, local_closed: false,
-        peer:              [0; 18], peer_family: 0, server_fd: -1, server_mask: 0, ready: 0, queued: false, up: _Direction { .. }, down: _Direction { .. },
+        peer:              [0; 18], peer_family: 0,
         wait_n:            0, khold: 0, lowat_raised: false, input_sent: false, eof_held: false, delivering: false, relayed: false, partner: -1, rpos: 0, carried: 0,
         relay_eof_passed:  false, write_deadline: 0, limit_ms: [0; 5], limit_armed: [0; 5], limit_fired: [false; 5], last_read_ms: now,
         stall_since:       -1, peer_end_ms: -1,
