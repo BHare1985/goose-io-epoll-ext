@@ -1057,13 +1057,13 @@ fn _handle_eof<F>(io: Loop&, i: i64) {
     if s.wait_n > 0 { s.eof_held = true; io._input_check(i); return; }
     s.eof_handled = true;
     if s.keep_open {                                       // the application wants to finish its answer
-        if s.wr_shut { io._end(i, goose_io::CloseReason.PeerClosed); return; }
         s.half_closed_at_ms = io._now_ms;                   // the half-close limit bounds the wait for the application
         s.peer_end_ms = io._now_ms;
         io._update_interest(i);                             // input has ended: stop watching it, or a level-triggered socket at end of stream would wake the loop for ever
         io._pass_delivered++;
         let e: goose_io::Event = goose_io::Event.PeerEof { link: io._link_of(i) };
         F(io, e);
+        if s.wr_shut && io._links[i].state == _OPEN && !io._links[i].closing { io._end(i, goose_io::CloseReason.PeerClosed); }   // both sides have finished: PeerEof came first (contract section 6)
         return;
     }
     io._begin_close(i, goose_io::CloseReason.PeerClosed);
