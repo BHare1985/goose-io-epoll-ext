@@ -37,6 +37,28 @@ enum Message {
 // them) and creates one message pipe per loop. At most 64 loops. Returns the thread ids. A worker creates its own `Loop`, listens,
 // calls `attach(io, index)` and serves.
 fn spawn<W>(n: i64) -> i64[>..] {
+    _spawn_setup(n);
+    var ids: i64[>..] = [];
+    for i in _loop_count {
+        _loop_ids[i] = thread_spawn(W, i);
+        ids.push(_loop_ids[i]);
+    }
+    ids
+}
+
+// The same with one value handed to every worker, which is then a thread_fn (arg: A, index: i64). The value is copied into each thread:
+//     epoll::spawn(4, cfg, worker);
+fn spawn<W, A>(n: i64, arg: A) -> i64[>..] {
+    _spawn_setup(n);
+    var ids: i64[>..] = [];
+    for i in _loop_count {
+        _loop_ids[i] = thread_spawn(W, arg, i);
+        ids.push(_loop_ids[i]);
+    }
+    ids
+}
+
+fn _spawn_setup(n: i64) {
     _signal_fd = c_signals_open();
     _loop_count = if n < _MAX_LOOPS { n } else { _MAX_LOOPS };
     for i in _loop_count {
@@ -45,12 +67,6 @@ fn spawn<W>(n: i64) -> i64[>..] {
         _message_read_fds[i] = fds[0];
         _message_write_fds[i] = fds[1];
     }
-    var ids: i64[>..] = [];
-    for i in _loop_count {
-        _loop_ids[i] = thread_spawn(W, i);
-        ids.push(_loop_ids[i]);
-    }
-    ids
 }
 
 // A sensible default for the number of loops: the CPUs this process may use.
