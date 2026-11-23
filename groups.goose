@@ -78,17 +78,17 @@ fn _same_connection(io: Loop&, a: i64, b: i64) -> bool {
     let sa .= io._links[a];
     let sb .= io._links[b];
     if sa.fd < 0 || sb.fd < 0 { return false; }
-    var pa: u8[18] = [0; 18];
-    var pb: u8[18] = [0; 18];
-    let fa = c_peer(sa.fd, pa);
-    let fb = c_peer(sb.fd, pb);
-    if fa <= 0 || fb <= 0 || fa != fb { return false; }
-    let la = c_local_port(sa.fd);
+    _remember_peer(sa);
+    _remember_peer(sb);
+    let fa = sa.peer_family;
+    if fa <= 0 || fa != sb.peer_family { return false; }
+    // a's peer port must be b's own port: one getsockname settles the usual case (two unrelated sockets)
     let lb = c_local_port(sb.fd);
-    if la < 0 || lb < 0 { return false; }
-    let pa_port = ((pa[16] as i64) << 8) | (pa[17] as i64);
-    let pb_port = ((pb[16] as i64) << 8) | (pb[17] as i64);
-    pa_port == lb && pb_port == la
+    if lb < 0 { return false; }
+    if (((sa.peer[16] as i64) << 8) | (sa.peer[17] as i64)) != lb { return false; }
+    let la = c_local_port(sa.fd);
+    if la < 0 { return false; }
+    (((sb.peer[16] as i64) << 8) | (sb.peer[17] as i64)) == la
 }
 
 // A link about to be relayed gives up its withholding and hands the bytes it holds (not yet delivered) to the relay.
