@@ -204,6 +204,7 @@ fn _relay_pump(io: Loop&, i: i64) {
     let p .= io._links[pi];
     var rounds = 0;
     var progress = false;
+    var drained = false;          // a short read emptied the socket: level-triggered, so the next byte wakes us; no recv to learn EAGAIN
     loop {
         if s.rbuf >= 0 {
             if s.rpos < s.rlen {
@@ -235,7 +236,7 @@ fn _relay_pump(io: Loop&, i: i64) {
             if !io._relay_eof(i) { return; }
             break;
         }
-        if !s._wants_read() || rounds >= _RELAY_ROUNDS { break; }
+        if !s._wants_read() || rounds >= _RELAY_ROUNDS || drained { break; }
         rounds++;
         let b = io._take_buffer();
         if b < 0 {
@@ -250,6 +251,7 @@ fn _relay_pump(io: Loop&, i: i64) {
             s.rbuf = b;
             s.rlen = n as i32;
             s.rpos = 0;
+            if n < buffer.len { drained = true; }
             s.last_active_ms = io._now_ms;
             p.last_active_ms = io._now_ms;
             s.last_read_ms = io._now_ms;
