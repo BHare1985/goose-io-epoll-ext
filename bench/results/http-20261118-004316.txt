@@ -1,0 +1,33 @@
+# 2026-11-18T00:43:16Z  host: 7.0.0-42-generic, AMD Ryzen 5 3550H with Radeon Vega Mobile Gfx, 8 threads;  00:43:16 up 18 days, 22:41,  9 users,  load average: 5.97, 3.51, 2.25
+# baseline: tcprouter e021769; candidate: goose-io 2db84df
+  void (candidate, 64 conns): server used 76% of its core
+  void (baseline, 64 conns): server used 75% of its core
+  void (candidate, 64 conns): server used 68% of its core
+  void (baseline, 64 conns): server used 71% of its core
+  void (candidate, 64 conns): server used 86% of its core
+  void (baseline, 64 conns): server used 80% of its core
+  void (candidate, 64 conns): server used 78% of its core
+  void (baseline, 64 conns): server used 84% of its core
+  void (candidate, 64 conns): server used 75% of its core
+  void (baseline, 64 conns): server used 87% of its core
+  void (candidate, 64 conns): server used 86% of its core
+
+64 connections, 7 alternating rounds (voided 11)
+  metric            baseline min      median         max    candidate median  verdict
+  requests/s            113411.1    115342.0    119292.6            118568.5  ok
+  p99 latency us          1030.0      1080.0      1170.0              1040.0  ok
+  cpu us/request             8.4         8.7         8.8                 8.4  ok
+  void (baseline, 512 conns): server used 86% of its core
+  void (candidate, 512 conns): server used 87% of its core
+  void (baseline, 512 conns): server used 89% of its core
+  void (candidate, 512 conns): server used 85% of its core
+  void (baseline, 512 conns): server used 84% of its core
+  void (candidate, 512 conns): server used 89% of its core
+
+512 connections, 7 alternating rounds (voided 6)
+  metric            baseline min      median         max    candidate median  verdict
+  requests/s             55512.9     87229.3     91077.0             89206.1  ok
+  p99 latency us          6660.0      7780.0     13340.0              7540.0  ok
+  cpu us/request            10.9        11.4        16.7                11.2  ok
+
+gate: PASS

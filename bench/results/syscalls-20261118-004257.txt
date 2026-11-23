@@ -1,0 +1,16 @@
+# 2026-11-18T00:42:57Z  host: 7.0.0-42-generic, AMD Ryzen 5 3550H with Radeon Vega Mobile Gfx
+# baseline: tcprouter e021769 (bench/baseline/http_hello); candidate: goose-io 2db84df
+workload     call         baseline  candidate   per request: baseline / candidate
+keep-alive   recvfrom        20002      20002     1.000 /   1.000  equal
+keep-alive   sendto          20000      20000     1.000 /   1.000  equal
+keep-alive   epoll_wait      20677      20014     1.034 /   1.001  equal
+keep-alive   epoll_ctl          18          4     0.001 /   0.000  equal
+keep-alive   accept4             4          4     0.000 /   0.000  equal
+keep-alive   close              14          8     0.001 /   0.000  equal
+new-conn     recvfrom         4001       4001     2.001 /   2.001  equal
+new-conn     sendto           2000       2000     1.000 /   1.000  equal
+new-conn     epoll_wait       6056       6011     3.028 /   3.006  equal
+new-conn     epoll_ctl        2017       2003     1.008 /   1.002  equal
+new-conn     accept4          4002       4002     2.001 /   2.001  equal
+new-conn     close            2013       2007     1.006 /   1.004  equal
+gate: PASS

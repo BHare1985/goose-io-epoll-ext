@@ -1,0 +1,8 @@
+# 2026-11-18T00:49:00Z  host: 7.0.0-42-generic; baseline: tcprouter e021769; candidate: goose-io 2db84df
+                                 baseline    candidate
+idle RSS (kB)                      6624.0       2240.0
+RSS, 10000 idle links (kB)        28484.0      23740.0
+bytes per idle link                2238.5       2201.6
+peak RSS under load (kB)          37080.0      31976.0
+bytes per idle link, no state        171.6        147.9   (programs of their own, answering nothing)
+gate: PASS (no more than the baseline, within 3%; at most 512 bytes per idle link)
