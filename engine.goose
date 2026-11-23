@@ -565,8 +565,7 @@ fn _new_link(io: Loop&, k: i64, fd: i32) {
     let i = io._fresh_link(fd, (k + 1) as u32, _OPEN);
     let r = io._fwd_route_of((k + 1) as u32);
     if r >= 0 { io._start_forward(i, r); return; }
-    io._queue(_PENDING_OPENED, i);
-    io._update_interest(i);
+    io._queue(_PENDING_OPENED, i);                         // registered with epoll after its Opened is handled: a handler that pauses it at once costs no epoll_ctl
 }
 
 // --- dialling ------------------------------------------------------------------------------------
@@ -1096,6 +1095,7 @@ fn _deliver<F>(io: Loop&) {
             let e: goose_io::Event = goose_io::Event.Opened { link: link, listener: goose_io::Listener { id: r.listener } };
             F(io, e);
             io._links[i].window = false;
+            if io._links[i].gen == r.gen { io._update_interest(i); }
         } else if r.kind == _PENDING_DATA {
             let s .= io._links[i];
             s.data_queued = false;
