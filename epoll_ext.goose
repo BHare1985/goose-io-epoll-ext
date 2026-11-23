@@ -1,6 +1,6 @@
 // The epoll event loop of goose-io: the contract (`goose_io`) on real sockets, on Linux, one `Loop` per thread.
 //
-//     import goose_io from "github.com/BHare1985/goose-io@bfadab427f4ac37a89d9182fbd943d0c9e0d7457";
+//     import goose_io from "github.com/BHare1985/goose-io@v0.3";
 //     import epoll from "github.com/BHare1985/goose-io-epoll-ext";
 //
 // It supplies the core and the half-close, sizing, abort, inspection and batching groups of contract 0.2 (not the unix group). A program

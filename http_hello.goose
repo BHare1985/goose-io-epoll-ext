@@ -8,7 +8,7 @@
 // Needs: core only.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@bfadab427f4ac37a89d9182fbd943d0c9e0d7457";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import epoll_ext from ".";
 
 struct Session { inbox: u8[..2048] = [] }

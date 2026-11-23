@@ -5,7 +5,7 @@
 // A deadline that must survive a suspend has to be measured on CLOCK_BOOTTIME, which keeps counting while the machine sleeps;
 // CLOCK_MONOTONIC stops. /proc/uptime is defined as the time since boot including suspend, i.e. CLOCK_BOOTTIME, so it is an
 // independent witness for the clock the engine reads (c_boottime_ms, the one every deadline and timeout uses).
-import goose_io from "github.com/BHare1985/goose-io@bfadab427f4ac37a89d9182fbd943d0c9e0d7457";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import epoll_ext from "..";
 import std;
 import os;

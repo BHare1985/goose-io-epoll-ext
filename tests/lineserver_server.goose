@@ -6,7 +6,7 @@
 // Needs: core and half-close. It fails to build on a loop without them.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@bfadab427f4ac37a89d9182fbd943d0c9e0d7457";
+import goose_io from "github.com/BHare1985/goose-io@v0.3";
 import goose_io.examples.lineserver.server;
 import epoll_ext from "..";
 
