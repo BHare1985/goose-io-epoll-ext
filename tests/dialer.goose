@@ -12,7 +12,7 @@
 // bad address each end in one CLOSED with `failed:` and the kind.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.3";
+import goose_io from "github.com/BHare1985/goose-io@v0.4";
 import epoll_ext from "..";
 
 struct Tag { n: i64 = 0 }

@@ -7,7 +7,7 @@
 // Prints READY at start and a STAT line every --stat-ms (tcprouter's harness format). Stops on SIGTERM or SIGINT, draining for up to five seconds.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.3";
+import goose_io from "github.com/BHare1985/goose-io@v0.4";
 import epoll_ext from ".";
 
 var pending_listen: u8[>..] = [];

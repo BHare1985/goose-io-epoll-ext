@@ -5,15 +5,15 @@ The reference Linux epoll event loop of the I/O contract: workers that share not
 
 ## Requirements
 
-### Requirement: The loop supplies the core and its five groups and passes the suite
-The epoll event loop SHALL supply every operation and event of the core and of the half-close, sizing, abort, inspection and batching groups (whether it also supplies the unix group is decided when it is applied), and SHALL pass the core and each group of the conformance suite on Linux. It SHALL call the contract's checks for the core and for each group from its root program.
+### Requirement: The loop supplies the core and its declared capabilities and passes the suite
+The epoll event loop SHALL supply every operation and event of the core and of the capabilities it declares, one `supplies_<capability>` function each (contract 0.4), and SHALL pass the core and each declared capability of the conformance suite on Linux. It SHALL call the contract's checks for the core and for each capability it declares from its root program.
 
-#### Scenario: The suite passes by group
-- **WHEN** the core and each group of the conformance suite are run against the epoll event loop on Linux
+#### Scenario: The suite passes by capability
+- **WHEN** the core and each declared capability of the conformance suite are run against the epoll event loop on Linux
 - **THEN** every check of every part passes, in fifty repetitions
 
 #### Scenario: A missing operation is a compile error
-- **WHEN** an operation of a group the loop claims is removed from it
+- **WHEN** an operation of a capability the loop declares is removed from it
 - **THEN** its root program fails to build and the error names the operation
 
 ### Requirement: The example libraries run on real sockets

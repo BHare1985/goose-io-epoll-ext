@@ -1,5 +1,5 @@
 // The epoll event loop: one `Loop` is one thread's event loop on real sockets, and supplies the whole contract
-// (the core and the half-close, sizing, abort, inspection and batching groups; not the unix group).
+// (the core and ten capabilities, declared at the end of proxy_capabilities.goose; not unix).
 //
 // It is tcprouter's engine (its generic layer: the worker loop, slots and generations, buffer pool, bounded send
 // queue, dial, timeouts, drain, statistics) with the proxy removed (routes, SNI inspection, forwarding, retry, policy,
@@ -39,7 +39,7 @@ let _EVENT_KIND_LISTENER: u64 = 1;
 let _EVENT_KIND_LINK:     u64 = 2;
 let _EVENT_KIND_ORPHAN:   u64 = 3;    // a socket of a link that has ended, kept open to read and drop the peer's input (see _finish_close)
 let _EVENT_KIND_MESSAGE:  u64 = 4;
-let _EVENT_KIND_WAKE:     u64 = 8;    // the read end of this loop's wake pipe (groups.goose)
+let _EVENT_KIND_WAKE:     u64 = 8;    // the read end of this loop's wake pipe (proxy_capabilities.goose)
 let _WAITER_READER:       u64 = 1;    // in the low byte of a _waiting_reads entry: a read waits for a pool buffer
 let _WAITER_WRITER:       u64 = 2;    // a refused send waits for a pool buffer
 
@@ -49,9 +49,9 @@ let _PENDING_OPENED:   u8 = 1;
 let _PENDING_DATA:     u8 = 2;
 let _PENDING_WRITABLE: u8 = 3;
 let _PENDING_CLOSED:   u8 = 4;
-let _PENDING_INPUT:    u8 = 6;        // the peek group: held bytes are ready (or the peer's end came)
-let _PENDING_EXPIRED:  u8 = 7;        // the limits group: value = the limit's index
-let _PENDING_WOKEN:    u8 = 8;        // the wake group: value = what was passed to wake
+let _PENDING_INPUT:    u8 = 6;        // the peek capability: held bytes are ready (or the peer's end came)
+let _PENDING_EXPIRED:  u8 = 7;        // the limits capability: value = the limit's index
+let _PENDING_WOKEN:    u8 = 8;        // the wake capability: value = what was passed to wake
 let _PENDING_EOF:      u8 = 5;        // the peer's end of stream was read; what it means is decided when this record is reached (keep-open window)
 
 // --- statistics ----------------------------------------------------------------------------------
@@ -126,7 +126,7 @@ struct _Link {
     local_closed:      bool,     // the application called close or reset
     peer:              u8[18],   // the peer's address, kept when a reset has made the socket forget it (_end)
     peer_family:       i32,      // 4 or 6 when `peer` holds one, else 0
-    // --- the proxy groups (groups.goose) ---
+    // --- the proxy capabilities (proxy_capabilities.goose) ---
     wait_n:            i64,        // wait_input: bytes to hold before an Input, 0 = deliver Data
     khold:             i64,        // wait_input: bytes known to wait in the kernel (they are not read until peek/relay/wait_input(0))
     lowat_raised:      bool,       // SO_RCVLOWAT is above 1 on the socket
@@ -210,7 +210,7 @@ root struct Loop {
     _ready_head:         i64             = 0,
     _limits_used:        bool            = false, // some link has a limit or a write deadline: the loop scans for them
     _limit_next:         i64             = 0,     // the earliest time a limit or a deadline may fall due; 0 = scan now
-    _wake_read:          i32             = -1,    // the wake pipe (the wake group): made by the first waker()
+    _wake_read:          i32             = -1,    // the wake pipe (the wake capability): made by the first waker()
     _wake_write:         i32             = -1,
 }
 

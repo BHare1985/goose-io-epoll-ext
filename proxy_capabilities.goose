@@ -1,4 +1,4 @@
-// The proxy groups of contract 0.3 on the epoll loop: relay, peek, revoke, wake and limits (the first three move bytes
+// The proxy capabilities of contract 0.4 on the epoll loop: relay, peek, revoke, wake and limits (the first three move bytes
 // between links or hold them, wake crosses threads, limits time the links). Everything here is built from the engine's own parts: the
 // pool buffers, the pending queue and the per-pass scan; nothing is a new mechanism in epoll.
 //
@@ -614,3 +614,15 @@ fn _read_wakes(io: Loop&) {
         io._pending.push(_Pending { kind: _PENDING_WOKEN, slot: at as u32, gen: len as u32, listener: 0, why: goose_io::CloseReason.Local, value: v as i64 });
     }
 }
+
+// The capabilities this loop supplies (contract 0.4): the five of the epoll loop and the five of this file. Not unix.
+fn supplies_half_close(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_sizing(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_abort(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_inspection(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_batching(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_relay(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_peek(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_revoke(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_wake(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_limits(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }

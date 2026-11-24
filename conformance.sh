@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Runs the conformance suite against the epoll event loop, on real sockets: every part of the core and of each group the loop
-# supplies (half-close, sizing, abort, inspection and batching; the unix group is not supplied), one process for each part.
-# Usage: conformance.sh [--repeat N] [--group G]
+# Runs the conformance suite against the epoll event loop, on real sockets: every part of the core and of each capability the loop
+# supplies (all but unix), one process for each part.
+# Usage: conformance.sh [--repeat N] [--capability C]
 # A part that fails in any repetition fails the run. Unlike the in-memory event loop the real one is not deterministic, so the
 # output of repetitions is not compared: a failure in any of them is a failure.
 set -u
-here="$(cd "$(dirname "$0")" && pwd)"; goose_io="${GOOSE_IO:-${GOOSE_HOME:-$HOME/.goose}/pkg/github.com/BHare1985/goose-io/v0.3}"; cd "$here"
+here="$(cd "$(dirname "$0")" && pwd)"; goose_io="${GOOSE_IO:-${GOOSE_HOME:-$HOME/.goose}/pkg/github.com/BHare1985/goose-io/v0.4}"; cd "$here"
 repeat=1; only=
 while [ $# -gt 0 ]; do
     case "$1" in
         --repeat) shift; repeat="${1:?--repeat needs a number}" ;;
-        --group) shift; only="${1:?--group needs a name}" ;;
+        --capability) shift; only="${1:?--capability needs a name}" ;;
         *) echo "unknown argument $1"; exit 2 ;;
     esac
     shift
@@ -18,10 +18,10 @@ done
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/epoll-conformance.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
 ./build.sh conformance.goose "$tmp/conformance" >"$tmp/build.log" 2>&1 || { cat "$tmp/build.log"; echo "BUILD FAILED"; exit 1; }
 tsv="$goose_io/tests/conformance/checks.tsv"
-groups=$(grep -v '^#' "$tsv" | cut -f6 | sort -u | grep -v '^unix$')
-[ -n "$only" ] && groups="$only"
+capabilities=$(grep -v '^#' "$tsv" | cut -f6 | sort -u | grep -v '^unix$')
+[ -n "$only" ] && capabilities="$only"
 failed=0; total=0
-for g in $groups; do
+for g in $capabilities; do
     parts=$(grep -v '^#' "$tsv" | awk -F'\t' -v g="$g" '$6 == g {print $2}' | sort -un)
     for ((i = 1; i <= repeat; i++)); do
         for p in $parts; do
