@@ -7,7 +7,7 @@
 // Prints READY at start and a STAT line every --stat-ms (tcprouter's harness format). Stops on SIGTERM or SIGINT, draining for up to five seconds.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import epoll_ext from ".";
 
 var pending_listen: u8[>..] = [];
@@ -108,7 +108,7 @@ thread_fn worker(index: i64) {
         while tend < end && routes[tend] != 44 { tend++; } // only the first target of a route list
         let target_addr = routes[eq + 1..tend];
         from = end + 1;
-        let l, err = io.listen(listen_addr);
+        let l, err = io.listen_shared(listen_addr);
         if goose_io::failed(err) { print("cannot listen on ", listen_addr); epoll_ext::report_failed_start(); return; }
         if !epoll_ext::forward_from(io, l, target_addr) { print("bad target ", target_addr); epoll_ext::report_failed_start(); return; }
     }

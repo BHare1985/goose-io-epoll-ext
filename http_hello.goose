@@ -8,7 +8,7 @@
 // Needs: core only.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import epoll_ext from ".";
 
 struct Session { inbox: u8[..2048] = [] }
@@ -43,7 +43,7 @@ var address: u8[>..] = [];
 thread_fn worker(index: i64) {
     var sessions = goose_io::LinkMap<Session> { .. };
     var io = epoll_ext::Loop { .. };
-    let listener, err = io.listen(address[..]);
+    let listener, err = io.listen_shared(address[..]);
     if goose_io::failed(err) {
         var msg: u8[>..] = [];
         epoll_ext::describe_listen_failure(address[..], err, msg);

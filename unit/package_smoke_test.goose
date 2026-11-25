@@ -4,7 +4,7 @@
 //     goose build --debug tests/unit/package_smoke_test.goose && ./tests/unit/package_smoke_test
 //
 // Imports the package the way a stranger would, with the sources it came from.
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import epoll_ext from "..";
 
 var checks: i64 = 0;

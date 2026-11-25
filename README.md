@@ -4,7 +4,7 @@
 where the loop moves a forwarded connection's bytes to its target and back itself. This repository is that loop's code with one commit
 on top of goose-io-epoll's; `git diff <first commit> HEAD` is the extension (namespace `epoll_ext`).
 
-`proxy_capabilities.goose` supplies the proxy capabilities of contract 0.4 on real sockets: relay, peek, revoke, wake and limits, and declares those and the five of goose-io-epoll (`supplies_<capability>`; not unix). The conformance suite
+`proxy_capabilities.goose` supplies the proxy capabilities of contract 0.5 on real sockets: relay, peek, revoke, wake and limits, and declares those and the six of goose-io-epoll (including shared-listen) (`supplies_<capability>`; not unix). The conformance suite
 runs all of them (`conformance.sh`).
 
 `forward_server.goose` is the proof: a server forwarding every connection of its listener to one target.

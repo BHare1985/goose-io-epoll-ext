@@ -11,7 +11,7 @@
 // Needs: core (and half-close for keep=1).
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import goose_io.examples.echo.echo;
 import epoll_ext from "..";
 
@@ -54,7 +54,10 @@ thread_fn worker(index: i64) {
     var io = epoll_ext::Loop { .. };
     io.limits = limits;
     var e = echo::Echo { .. };
-    if !e.start(io, address[..]) {
+    // the workers share one port (the shared-listen capability), so the library's plain `start` is not used
+    let l, lerr = io.listen_shared(address[..]);
+    e.listener = l;
+    if !goose_io::is_listener(l) || goose_io::failed(lerr) {
         print("cannot listen on ", address);
         epoll_ext::report_failed_start();
         return;

@@ -483,14 +483,21 @@ fn _release(io: Loop&, i: i64) {
 
 // --- listening and accepting ---------------------------------------------------------------------
 
-fn listen(io: Loop&, address: const u8[:]) -> goose_io::Listener, goose_io::ListenError {
+// Plain listen: the port is this loop's alone (a second listener on it, plain or shared, is AddressInUse).
+fn listen(io: Loop&, address: const u8[:]) -> goose_io::Listener, goose_io::ListenError { return io._listen(address, false); }
+
+// Shared listen (the shared-listen capability): SO_REUSEPORT, so several loops (one per core) each hold the address and the
+// kernel hands every connection to exactly one of them. A shared listener on a path is BadAddress.
+fn listen_shared(io: Loop&, address: const u8[:]) -> goose_io::Listener, goose_io::ListenError { return io._listen(address, true); }
+
+fn _listen(io: Loop&, address: const u8[:], shared: bool) -> goose_io::Listener, goose_io::ListenError {
     let none = goose_io::Listener { .. };
     if io._finished || io._draining { return none, goose_io::ListenError { kind: goose_io::ListenErrorKind.Other, code: 108 }; }
     var p = _ParsedAddress { false, [0; 16], 0 };
     if !_parse_address(address, p, true) { return none, goose_io::ListenError { kind: goose_io::ListenErrorKind.BadAddress, code: 22 }; }
     if !io._ensure() { return none, goose_io::ListenError { kind: goose_io::ListenErrorKind.NoResources, code: 24 }; }
     if io._listeners.len >= 0xfffffffe { return none, goose_io::ListenError { kind: goose_io::ListenErrorKind.NoResources, code: 24 }; }
-    let fd = c_listen(p.v6, p.ip, p.port, true, 1024);
+    let fd = c_listen(p.v6, p.ip, p.port, shared, 1024);
     if fd < 0 { return none, goose_io::ListenError { kind: _listen_kind(-fd), code: -fd }; }
     let index = io._listeners.len;
     if c_epoll_ctl(io._epoll_fd, c_EPOLL_CTL_ADD, fd, c_EPOLLIN, _pack_event_data(_EVENT_KIND_LISTENER, index, 0)) < 0 {

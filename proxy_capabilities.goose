@@ -621,6 +621,7 @@ fn supplies_sizing(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied 
 fn supplies_abort(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
 fn supplies_inspection(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
 fn supplies_batching(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
+fn supplies_shared_listen(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
 fn supplies_relay(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
 fn supplies_peek(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }
 fn supplies_revoke(io: Loop&) -> goose_io::Supplied { return goose_io::Supplied {}; }

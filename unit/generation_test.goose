@@ -6,7 +6,7 @@
 // RT-2b: an event with an old generation never touches the link now in that slot. The test reaches the loop's internal names
 // (_dispatch_event, _pack_event_data, the counters in stats()) on purpose; it is the one test allowed to.
 // net/tc/generation_test.py proves the same row over a million real sockets.
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import epoll_ext from "..";
 
 var checks: i64 = 0;

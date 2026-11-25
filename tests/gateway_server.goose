@@ -6,7 +6,7 @@
 // Needs: core and half-close.
 import std;
 import os;
-import goose_io from "github.com/BHare1985/goose-io@v0.4";
+import goose_io from "github.com/BHare1985/goose-io@apply-name-resolution";
 import goose_io.examples.gateway;
 import goose_io.examples.lineserver.server;
 import goose_io.examples.lineclient.client;
